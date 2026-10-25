@@ -1,0 +1,53 @@
+name: Release Audio Dash
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - name: Install Frontend Dependencies
+        run: npm install
+
+      - name: Build Tauri Application & Create Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'Audio Dash v__VERSION__'
+          releaseBody: |
+            ## Audio Dash v__VERSION__ - Windows 11 Tactical Audio Optimizer
+            - Motor Equalizer APO con configuración dinámica en `%APPDATA%\AudioDash\config.txt`.
+            - Detección de ventana nativa Win32 (0.0% CPU).
+            - Permisos estándar anti-cheat friendly con elevación UAC bajo demanda.
+            - Descarga el instalador `.exe` o `.msi` abajo.
+          releaseDraft: false
+          prerelease: false
