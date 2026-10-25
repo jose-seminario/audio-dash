@@ -6,7 +6,6 @@ import {
   CheckCircle2,
   AlertTriangle,
   X,
-  ExternalLink,
   Loader2,
 } from "lucide-react";
 

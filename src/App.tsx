@@ -17,8 +17,6 @@ import {
   Gamepad2,
   SlidersHorizontal,
   Info,
-  CheckCircle,
-  AlertTriangle,
 } from "lucide-react";
 
 // Safe wrapper for Tauri invoke (falls back gracefully in browser dev mode)
@@ -316,11 +314,21 @@ export const App: React.FC = () => {
         <section className="p-4 rounded-xl bg-tactical-850/80 border border-tactical-700 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center space-x-2">
-              <Gamepad2 className="w-4 h-4 text-tactical-accent" />
+              <Gamepad2
+                className={`w-4 h-4 transition-colors ${
+                  isGameActive ? "text-tactical-green animate-pulse" : "text-slate-500"
+                }`}
+              />
               <span className="text-xs font-mono uppercase text-slate-400">
                 Ventana en Primer Plano:
               </span>
-              <span className="font-mono text-xs font-bold text-slate-200 px-2 py-0.5 rounded bg-tactical-900 border border-tactical-700">
+              <span
+                className={`font-mono text-xs font-bold px-2 py-0.5 rounded bg-tactical-900 border transition-all ${
+                  isGameActive
+                    ? "text-tactical-green border-tactical-green/40 shadow-sm shadow-tactical-green/20"
+                    : "text-slate-300 border-tactical-700"
+                }`}
+              >
                 {currentProcess}
               </span>
             </div>
