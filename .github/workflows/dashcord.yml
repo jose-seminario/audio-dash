@@ -53,23 +53,20 @@ jobs:
       - name: Run Backend Unit Tests (SuperProperties & Keychain Mock)
         working-directory: Dashcord/src-tauri
         shell: cmd
+        continue-on-error: true
         run: cargo test --workspace --all-features --verbose > ..\test_result.txt 2>&1
 
-      - name: Upload Test Output Log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: cargo-test-result
-          path: Dashcord/test_result.txt
-
       - name: Display Test Results & Verify Success
+        if: always()
         working-directory: Dashcord
         shell: powershell
         run: |
           $content = Get-Content test_result.txt -Raw
+          $clean = ($content -replace "`r", " " -replace "`n", " ")
+          if ($clean.Length -gt 1000) { $clean = $clean.Substring(0, 1000) }
+          Write-Host "::error title=CargoTestLog::$clean"
           Write-Output $content
           if ($content -match "FAILED" -or $content -match "error:") {
-            Write-Error "Cargo test reported failure"
             exit 1
           }
 
