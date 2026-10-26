@@ -105,11 +105,6 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_intentional_failure_for_ci_guard() {
-        panic!("Forced failure to verify CI guard does NOT allow artifacts");
-    }
-
     #[tokio::test]
     async fn test_gateway_session_future_is_send() {
         fn assert_send<F: std::future::Future + Send>(_: F) {}
