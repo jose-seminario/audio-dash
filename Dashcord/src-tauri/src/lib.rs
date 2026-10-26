@@ -5,9 +5,9 @@ pub mod storage;
 use core::GatewayManager;
 use evasion::{SuperProperties, VersionResolver};
 use std::io::Write;
-use std::sync::Mutex;
 use storage::KeychainManager;
 use tauri::{Manager, State};
+use tokio::sync::Mutex;
 
 pub struct AppConfig {
     pub is_dry_run: bool,
@@ -60,7 +60,7 @@ async fn check_version_status() -> Result<SuperProperties, String> {
 async fn start_gateway_session(
     gateway: State<'_, GatewayHolder>,
 ) -> Result<String, String> {
-    let mut mgr = gateway.manager.lock().map_err(|e| e.to_string())?;
+    let mut mgr = gateway.manager.lock().await;
     mgr.start_session().await
 }
 
@@ -99,4 +99,31 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running dashcord application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_intentional_failure_for_ci_guard() {
+        panic!("Forced failure to verify CI guard does NOT allow artifacts");
+    }
+
+    #[tokio::test]
+    async fn test_gateway_session_future_is_send() {
+        fn assert_send<F: std::future::Future + Send>(_: F) {}
+
+        let holder = GatewayHolder {
+            manager: Mutex::new(GatewayManager::new(true)),
+        };
+
+        // Si el future retuviera un MutexGuard no-Send a través de .await, este bloque no compila:
+        let fut = async move {
+            let mut mgr = holder.manager.lock().await;
+            mgr.start_session().await
+        };
+
+        assert_send(fut);
+    }
 }

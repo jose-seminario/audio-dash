@@ -74,3 +74,23 @@ La compilación y el empaquetado del binario `DashCord.exe` se realizan exclusiv
   3. Ejecución de la suite de pruebas unitarias (`cargo test --workspace --all-features`).
   4. Generación del bundle con `tauri-action`.
   5. Publicación del artefacto `windows-dashcord`.
+
+---
+
+## 📥 Cómo descargar el ejecutable (.exe)
+
+Los binarios de DashCord no se compilan localmente en este entorno universitario por restricciones de privilegios y herramientas, sino que se generan de forma reproducible y segura en GitHub Actions.
+
+Para probar la aplicación:
+1. Dirígete a la pestaña **Actions** en el repositorio de GitHub: `https://github.com/jose-seminario/audio-dash/actions`.
+2. Haz clic en la última ejecución exitosa (en **verde**) del workflow **Build DashCord (Windows x64)**.
+3. Al final de la página, en la sección **Artifacts**, descarga el archivo comprimido **`windows-dashcord`**.
+4. Descomprime el archivo ZIP en una carpeta de tu equipo.
+5. Abre PowerShell y calcula el hash criptográfico para verificar la integridad del binario:
+   ```powershell
+   Get-FileHash .\dashcord.exe -Algorithm SHA256
+   ```
+6. Para ejecutar el protocolo de reconocimiento pasivo (**Sub-fase A**):
+   ```powershell
+   .\dashcord.exe --dry-run
+   ```

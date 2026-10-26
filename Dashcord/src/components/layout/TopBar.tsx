@@ -40,7 +40,7 @@ export const TopBar: React.FC = () => {
         </div>
       )}
 
-      <header className="h-11 bg-surface border-b border-border-subtle flex items-center justify-between px-3 z-30 select-none">
+      <header className="h-11 gradient-gaming-bar border-b border-border-subtle flex items-center justify-between px-3 z-30 select-none">
         {/* Left: Current Location */}
         <div className="flex items-center gap-2 min-w-0">
           <span className="text-muted text-xs font-semibold tracking-wider uppercase">

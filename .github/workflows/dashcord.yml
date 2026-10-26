@@ -46,31 +46,38 @@ jobs:
         working-directory: Dashcord
         run: npm ci || npm install
 
-      - name: Verify Frontend Compilation
+      - name: Verify TypeScript & Frontend Build
         working-directory: Dashcord
-        run: npm run build
+        run: |
+          npx tsc --noEmit
+          npm run build
 
-      - name: Audit - Dependency Trees for openssl-sys and boring-sys
+      - name: Audit - Dependency Trees for reqwest and openssl-sys
         working-directory: Dashcord/src-tauri
         shell: bash
         run: |
+          echo "=== AUDIT: reqwest in tree ==="
+          cargo tree -i reqwest 2>&1 || echo "reqwest not found (clean)"
           echo "=== AUDIT: openssl-sys in tree ==="
           cargo tree -i openssl-sys 2>&1 || echo "openssl-sys not found (clean)"
           echo "=== AUDIT: boring-sys / btls in tree ==="
           cargo tree -i btls-sys 2>&1 || cargo tree -i boring-sys 2>&1 || echo "btls-sys checked"
 
-      - name: Guard - No openssl-sys
+      - name: Guard - Zero reqwest & Zero openssl-sys
         working-directory: Dashcord/src-tauri
         shell: bash
         run: |
+          if cargo tree -i reqwest 2>/dev/null | grep -q reqwest; then
+            echo "::error::reqwest detected! Evasion layer compromised."
+            exit 1
+          fi
           if cargo tree -i openssl-sys 2>/dev/null | grep -q openssl-sys; then
             echo "::error::openssl-sys detected, may conflict with boring-sys"
             exit 1
-          else
-            echo "Guard PASS: openssl-sys is not present in dependency graph."
           fi
+          echo "Guard PASS: reqwest and openssl-sys are 0% present in dependency graph."
 
-      - name: Run Backend Unit Tests (SuperProperties & Keychain Mock)
+      - name: Run Backend Unit Tests (SuperProperties, Keychain Mock, & Async Send Regression)
         working-directory: Dashcord/src-tauri
         shell: bash
         run: cargo test --workspace --all-features --verbose
