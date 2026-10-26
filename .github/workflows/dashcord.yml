@@ -21,9 +21,6 @@ permissions:
 jobs:
   build-dashcord:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: Dashcord
 
     steps:
       - name: Checkout repository
@@ -36,6 +33,9 @@ jobs:
           cache: 'npm'
           cache-dependency-path: 'Dashcord/package-lock.json'
 
+      - name: Setup NASM for BoringSSL
+        uses: ilammy/setup-nasm@v1
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -43,9 +43,11 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Install Frontend Dependencies
+        working-directory: Dashcord
         run: npm ci || npm install
 
       - name: Verify Frontend Compilation
+        working-directory: Dashcord
         run: npm run build
 
       - name: Run Backend Unit Tests (SuperProperties & Keychain Mock)
