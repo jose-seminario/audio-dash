@@ -9,8 +9,11 @@ on:
     branches:
       - main
 
+permissions:
+  contents: write
+
 jobs:
-  build-windows:
+  build-dashcord:
     runs-on: windows-latest
     steps:
       - name: Checkout repository
@@ -21,6 +24,9 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+
+      - name: Setup NASM for BoringSSL
+        uses: ilammy/setup-nasm@v1
 
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
