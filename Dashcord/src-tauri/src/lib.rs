@@ -2,8 +2,20 @@ pub mod core;
 pub mod evasion;
 pub mod storage;
 
+use core::GatewayManager;
 use evasion::{SuperProperties, VersionResolver};
+use std::io::Write;
+use std::sync::Mutex;
 use storage::KeychainManager;
+use tauri::{Manager, State};
+
+pub struct AppConfig {
+    pub is_dry_run: bool,
+}
+
+pub struct GatewayHolder {
+    pub manager: Mutex<GatewayManager>,
+}
 
 #[tauri::command]
 fn get_super_properties() -> Result<SuperProperties, String> {
@@ -11,8 +23,8 @@ fn get_super_properties() -> Result<SuperProperties, String> {
 }
 
 #[tauri::command]
-fn save_token(token: String) -> Result<(), String> {
-    KeychainManager::store_token(&token)
+fn save_token(config: State<'_, AppConfig>, token: String) -> Result<(), String> {
+    KeychainManager::store_token(&token, config.is_dry_run)
 }
 
 #[tauri::command]
@@ -21,18 +33,18 @@ fn get_token() -> Result<String, String> {
 }
 
 #[tauri::command]
-fn delete_token() -> Result<(), String> {
-    KeychainManager::delete_token()
+fn delete_token(config: State<'_, AppConfig>) -> Result<(), String> {
+    KeychainManager::delete_token(config.is_dry_run)
 }
 
 #[tauri::command]
 fn check_evasion_status() -> serde_json::Value {
     serde_json::json!({
-        "tls_impersonate": "Chrome128",
-        "boring_ssl_active": true,
+        "tls_engine": "BoringSSL (wreq 6.0.0-rc.31)",
         "platform_spoof": "Windows 10 x64",
         "telemetry_filter_active": true,
-        "zero_reqwest_verified": true
+        "zero_reqwest_verified": true,
+        "zero_openssl_verified": true
     })
 }
 
@@ -44,19 +56,46 @@ async fn check_version_status() -> Result<SuperProperties, String> {
         .map_err(|status| serde_json::to_string(&status).unwrap_or(status.message))
 }
 
+#[tauri::command]
+async fn start_gateway_session(
+    gateway: State<'_, GatewayHolder>,
+) -> Result<String, String> {
+    let mut mgr = gateway.manager.lock().map_err(|e| e.to_string())?;
+    mgr.start_session().await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let args: Vec<String> = std::env::args().collect();
+    let is_dry_run = args.iter().any(|arg| arg == "--dry-run")
+        || std::env::var("DASHCORD_DRY_RUN").map(|v| v == "1").unwrap_or(false);
+
+    if is_dry_run {
+        println!("[DRY-RUN] Starting DashCord in dry-run mode");
+        println!("[DRY-RUN] Simulated READY received");
+        eprintln!("[DRY-RUN] Error stream active");
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+    }
+
     let _ = core::init_secure_logger(None);
+
+    let gateway_manager = GatewayManager::new(is_dry_run);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .manage(AppConfig { is_dry_run })
+        .manage(GatewayHolder {
+            manager: Mutex::new(gateway_manager),
+        })
         .invoke_handler(tauri::generate_handler![
             get_super_properties,
             save_token,
             get_token,
             delete_token,
             check_evasion_status,
-            check_version_status
+            check_version_status,
+            start_gateway_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running dashcord application");

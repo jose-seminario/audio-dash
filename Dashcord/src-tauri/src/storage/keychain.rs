@@ -15,8 +15,15 @@ static MOCK_KEYRING: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 pub struct KeychainManager;
 
 impl KeychainManager {
-    /// Guarda el token de forma segura en el Keychain del SO (o mock en tests)
-    pub fn store_token(token: &str) -> Result<(), String> {
+    /// Guarda el token de forma segura (o no-op en modo dry-run)
+    pub fn store_token(token: &str, is_dry_run: bool) -> Result<(), String> {
+        if is_dry_run {
+            println!("[KEYCHAIN] Dry-run: token not saved");
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            return Ok(());
+        }
+
         #[cfg(any(test, feature = "test-mock"))]
         {
             let mut guard = MOCK_KEYRING.lock().map_err(|e| e.to_string())?;
@@ -32,7 +39,7 @@ impl KeychainManager {
         }
     }
 
-    /// Obtiene el token guardado
+    /// Obtiene el token guardado (lectura benigna en Credential Manager)
     pub fn get_token() -> Result<String, String> {
         #[cfg(any(test, feature = "test-mock"))]
         {
@@ -53,7 +60,12 @@ impl KeychainManager {
     }
 
     /// Elimina el token del Keychain
-    pub fn delete_token() -> Result<(), String> {
+    pub fn delete_token(is_dry_run: bool) -> Result<(), String> {
+        if is_dry_run {
+            println!("[KEYCHAIN] Dry-run: token not deleted");
+            return Ok(());
+        }
+
         #[cfg(any(test, feature = "test-mock"))]
         {
             let mut guard = MOCK_KEYRING.lock().map_err(|e| e.to_string())?;
@@ -79,17 +91,24 @@ mod tests {
     fn test_save_load_delete_keychain_mock() {
         let test_token = "mfa.test_mock_token_secret_123456";
 
-        // 1. Guardar token
-        KeychainManager::store_token(test_token).expect("Error storing token in mock");
+        // 1. Guardar token (no dry-run en tests)
+        KeychainManager::store_token(test_token, false).expect("Error storing token in mock");
 
         // 2. Recuperar token
         let retrieved = KeychainManager::get_token().expect("Error retrieving token from mock");
         assert_eq!(retrieved, test_token);
 
         // 3. Eliminar token
-        KeychainManager::delete_token().expect("Error deleting token from mock");
+        KeychainManager::delete_token(false).expect("Error deleting token from mock");
 
         // 4. Verificar que ya no existe
         assert!(KeychainManager::get_token().is_err());
+    }
+
+    #[test]
+    fn test_dry_run_keychain_no_op() {
+        // En dry-run store_token es no-op
+        let res = KeychainManager::store_token("fake_token", true);
+        assert!(res.is_ok());
     }
 }
