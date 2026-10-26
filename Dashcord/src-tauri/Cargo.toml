@@ -26,7 +26,7 @@ keyring = "3.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
-rquest = { version = "=5.2.0", features = ["cookies"] }
+wreq = { version = "=6.0.0-rc.31", default-features = false, features = ["tokio-rt", "cookies", "gzip", "json"] }
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }

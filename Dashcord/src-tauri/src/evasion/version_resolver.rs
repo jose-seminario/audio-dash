@@ -72,7 +72,7 @@ impl VersionResolver {
             }
         }
 
-        // 2. Intentar actualizar remotamente vía rquest (BoringSSL TLS Spoofed)
+        // 2. Intentar actualizar remotamente vía wreq (BoringSSL TLS Spoofed)
         match Self::fetch_latest_remote().await {
             Ok(fetched) => {
                 let _ = Self::save_cache(&fetched, app_data_dir);
@@ -119,7 +119,7 @@ impl VersionResolver {
         }
     }
 
-    /// Realiza la consulta remota a discord.com/app usando rquest
+    /// Realiza la consulta remota a discord.com/app usando wreq con BoringSSL
     async fn fetch_latest_remote() -> Result<VersionCache, String> {
         let client = TlsSpoofFactory::build_spoofed_client().map_err(|e| e.to_string())?;
 

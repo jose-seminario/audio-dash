@@ -1,9 +1,9 @@
 use crate::evasion::{SuperProperties, TlsSpoofFactory, TrackerFilter};
-use rquest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, USER_AGENT};
+use wreq::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, USER_AGENT};
 use serde_json::Value;
 
 pub struct DiscordRestClient {
-    client: rquest::Client,
+    client: wreq::Client,
     token: Option<String>,
     super_properties_header: String,
 }
@@ -20,7 +20,7 @@ impl DiscordRestClient {
         })
     }
 
-    /// Envía un mensaje a un canal usando la capa de evasión TLS/HTTP2
+    /// Envía un mensaje a un canal usando la capa de evasión TLS/HTTP2 con wreq y BoringSSL
     pub async fn send_message(&self, channel_id: &str, content: &str) -> Result<Value, String> {
         let url = format!("https://discord.com/api/v10/channels/{}/messages", channel_id);
 

@@ -15,6 +15,7 @@ permissions:
 jobs:
   build-dashcord:
     runs-on: windows-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -40,8 +41,29 @@ jobs:
       - name: Verify Frontend Compilation
         run: npm run build
 
+      - name: Audit - Dependency Trees for openssl-sys and boring-sys
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          echo "=== AUDIT: openssl-sys in tree ==="
+          cargo tree -i openssl-sys 2>&1 || echo "openssl-sys not found (clean)"
+          echo "=== AUDIT: boring-sys / btls in tree ==="
+          cargo tree -i btls-sys 2>&1 || cargo tree -i boring-sys 2>&1 || echo "btls-sys checked"
+
+      - name: Guard - No openssl-sys
+        working-directory: src-tauri
+        shell: bash
+        run: |
+          if cargo tree -i openssl-sys 2>/dev/null | grep -q openssl-sys; then
+            echo "::error::openssl-sys detected, may conflict with boring-sys"
+            exit 1
+          else
+            echo "Guard PASS: openssl-sys is not present in dependency graph."
+          fi
+
       - name: Run Backend Unit Tests (SuperProperties & Keychain Mock)
         working-directory: src-tauri
+        shell: bash
         run: cargo test --workspace --all-features --verbose
 
       - name: Build Tauri Application

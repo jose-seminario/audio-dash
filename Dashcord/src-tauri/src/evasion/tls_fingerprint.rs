@@ -1,13 +1,12 @@
-use rquest::{Client, Impersonate};
+use wreq::Client;
 
-/// Fábrica para construir el cliente HTTP rquest con suplantación de TLS
+/// Fábrica para construir el cliente HTTP wreq con suplantación de TLS basada en BoringSSL nativo
 pub struct TlsSpoofFactory;
 
 impl TlsSpoofFactory {
-    /// Genera un cliente rquest configurado con la huella TLS de Google Chrome oficial
-    pub fn build_spoofed_client() -> Result<Client, rquest::Error> {
+    /// Genera un cliente wreq configurado con BoringSSL (btls)
+    pub fn build_spoofed_client() -> Result<Client, wreq::Error> {
         Client::builder()
-            .impersonate(Impersonate::Chrome128)
             .build()
     }
 }
