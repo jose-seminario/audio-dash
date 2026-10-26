@@ -52,7 +52,15 @@ jobs:
 
       - name: Run Backend Unit Tests (SuperProperties & Keychain Mock)
         working-directory: Dashcord/src-tauri
-        run: cargo test --workspace --all-features --verbose
+        shell: powershell
+        run: |
+          $output = cargo test --workspace --all-features --verbose 2>&1
+          $outputStr = $output | Out-String
+          Write-Output $outputStr
+          if ($LASTEXITCODE -ne 0) {
+            $errSnippet = if ($outputStr.Length -gt 1500) { $outputStr.Substring($outputStr.Length - 1500) } else { $outputStr }
+            Write-Error "CARGO_TEST_FAILED: $errSnippet"
+          }
 
       - name: Build Tauri Application
         uses: tauri-apps/tauri-action@v0
