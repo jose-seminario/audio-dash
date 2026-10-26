@@ -2,6 +2,9 @@
 logs/
 *.log
 *.err
+*.txt
+dryrun.log
+dryrun.err
 
 # Dependencies and build outputs
 node_modules/

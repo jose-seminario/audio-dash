@@ -2,6 +2,9 @@
 logs/
 *.log
 *.err
+*.txt
+dryrun.log
+dryrun.err
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
