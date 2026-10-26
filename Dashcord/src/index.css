@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Midnight Blue Theme (Default) */
+  --bg-base: #070B16;
+  --bg-surface: #0B1020;
+  --bg-secondary: #0F172A;
+  --bg-tertiary: #131E36;
+  --bg-hover: rgba(59, 130, 246, 0.08);
+  --bg-active: rgba(59, 130, 246, 0.16);
+
+  /* Borders */
+  --border-subtle: #18233C;
+  --border-glow: rgba(0, 163, 255, 0.35);
+
+  /* Accents */
+  --accent-primary: #3B82F6;
+  --accent-cyan: #00A3FF;
+  --accent-ice: #7DD3FC;
+  --accent-glow: rgba(0, 163, 255, 0.25);
+
+  /* Typography */
+  --text-primary: #F8FAFC;
+  --text-secondary: #94A3B8;
+  --text-muted: #64748B;
+
+  /* Status Colors */
+  --status-online: #22C55E;
+  --status-idle: #F59E0B;
+  --status-dnd: #EF4444;
+  --status-offline: #64748B;
+
+  /* Layout & Geometry */
+  --radius-default: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --font-base-size: 14px;
+}
+
+/* Custom Scrollbar for Sleek Gaming UI */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-subtle);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-primary);
+}
+
+/* App container base */
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: var(--font-base-size);
+  color: var(--text-primary);
+  background-color: var(--bg-base);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Glassmorphism utility */
+.glass-panel {
+  background: rgba(15, 23, 42, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+}
+
+.glass-dropdown {
+  background: rgba(11, 16, 32, 0.92);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid var(--border-subtle);
+  box-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.6);
+}
