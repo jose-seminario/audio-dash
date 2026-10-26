@@ -66,7 +66,7 @@ impl KeychainManager {
         #[cfg(not(any(test, feature = "test-mock")))]
         {
             let entry = Entry::new(SERVICE_NAME, TOKEN_USER).map_err(|e| e.to_string())?;
-            entry.delete_password().map_err(|e| e.to_string())
+            entry.delete_credential().map_err(|e| e.to_string())
         }
     }
 }

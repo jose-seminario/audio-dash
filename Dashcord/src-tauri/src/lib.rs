@@ -2,7 +2,7 @@ pub mod core;
 pub mod evasion;
 pub mod storage;
 
-use evasion::{SuperProperties, VersionResolver, VersionStatus};
+use evasion::{SuperProperties, VersionResolver};
 use storage::KeychainManager;
 
 #[tauri::command]
@@ -37,9 +37,11 @@ fn check_evasion_status() -> serde_json::Value {
 }
 
 #[tauri::command]
-async fn check_version_status() -> Result<SuperProperties, VersionStatus> {
+async fn check_version_status() -> Result<SuperProperties, String> {
     let fallback = include_str!("../../version.json");
-    VersionResolver::check_and_resolve(None, fallback).await
+    VersionResolver::check_and_resolve(None, fallback)
+        .await
+        .map_err(|status| serde_json::to_string(&status).unwrap_or(status.message))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

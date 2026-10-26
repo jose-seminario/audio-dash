@@ -8,7 +8,6 @@ impl TlsSpoofFactory {
     pub fn build_spoofed_client() -> Result<Client, rquest::Error> {
         Client::builder()
             .impersonate(Impersonate::Chrome128)
-            .cookie_store(true)
             .build()
     }
 }

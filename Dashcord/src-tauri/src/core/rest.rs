@@ -1,5 +1,5 @@
 use crate::evasion::{SuperProperties, TlsSpoofFactory, TrackerFilter};
-use rquest::header::{HeaderMap, HeaderValue, AUTHORIZATION, USER_AGENT};
+use rquest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, USER_AGENT};
 use serde_json::Value;
 
 pub struct DiscordRestClient {
@@ -37,7 +37,7 @@ impl DiscordRestClient {
         }
 
         headers.insert(
-            "X-Super-Properties",
+            HeaderName::from_static("x-super-properties"),
             HeaderValue::from_str(&self.super_properties_header).map_err(|e| e.to_string())?,
         );
 
@@ -52,6 +52,9 @@ impl DiscordRestClient {
             "tts": false,
             "flags": 0
         });
+
+        // Registro sanitizado sin exponer el token ni el contenido del mensaje
+        tracing::info!("Enviando mensaje a canal {} con TLS Spoofed [Auth: REDACTED]", channel_id);
 
         let response = self
             .client
