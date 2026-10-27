@@ -4,7 +4,7 @@ use std::fs;
 use std::path::PathBuf;
 
 const HRIR_BASE_URL: &str =
-    "https://github.com/jose-seminario/audio-dash/releases/download/v1.2.0/";
+    "https://github.com/jose-seminario/audio-dash/releases/download/v1.3.0/";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HrtfProfile {

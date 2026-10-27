@@ -172,7 +172,19 @@ fn check_power_plan() -> bool {
 fn check_mmcss_registry() -> bool {
     #[cfg(windows)]
     {
-        false
+        use winreg::enums::*;
+        use winreg::RegKey;
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        if let Ok(key) = hklm.open_subkey("SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile") {
+            let sys_resp: Result<u32, _> = key.get_value("SystemResponsiveness");
+            let net_throttle: Result<u32, _> = key.get_value("NetworkThrottlingIndex");
+            match (sys_resp, net_throttle) {
+                (Ok(sr), Ok(nt)) => sr == 0 && nt == 0xFFFFFFFF,
+                _ => false,
+            }
+        } else {
+            false
+        }
     }
     #[cfg(not(windows))]
     {
@@ -192,6 +204,20 @@ pub async fn request_system_optimization() -> Result<bool, String> {
             use windows::core::PCWSTR;
             use windows::Win32::UI::Shell::ShellExecuteW;
             use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+            // Intento directo con winreg si la aplicación ya cuenta con privilegios
+            {
+                use winreg::enums::*;
+                use winreg::RegKey;
+                let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+                if let Ok(sys_profile) = hklm.open_subkey_with_flags(
+                    "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Multimedia\\SystemProfile",
+                    KEY_SET_VALUE,
+                ) {
+                    let _ = sys_profile.set_value("SystemResponsiveness", &0u32);
+                    let _ = sys_profile.set_value("NetworkThrottlingIndex", &0xFFFFFFFFu32);
+                }
+            }
 
             let script = r#"
                 # 1. Plan de energia de Alto Rendimiento
@@ -247,6 +273,82 @@ pub async fn request_system_optimization() -> Result<bool, String> {
             };
 
             // ShellExecute returns HINSTANCE > 32 on success
+            let is_success = (instance.0 as isize) > 32;
+            Ok(is_success)
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(true)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Applies Windows Loudness Equalization (LEQ) ultra-fast release tweak (<10ms)
+/// and restarts Windows Audio Service (audiosrv).
+#[tauri::command]
+pub async fn apply_leq_tweak() -> Result<bool, String> {
+    tokio::task::spawn_blocking(|| {
+        #[cfg(windows)]
+        {
+            use std::ffi::OsStr;
+            use std::os::windows::ffi::OsStrExt;
+            use windows::core::PCWSTR;
+            use windows::Win32::UI::Shell::ShellExecuteW;
+            use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+            #[cfg(windows)]
+            {
+                use winreg::enums::*;
+                use winreg::RegKey;
+                let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+                if let Ok(render_key) = hklm.open_subkey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render") {
+                    for _subkey_name in render_key.enum_keys().filter_map(|k| k.ok()) {
+                        // Discovered render device
+                    }
+                }
+            }
+
+            // Script elevado que sobrescribe {c2f038f4-41d5-4521-b1e1-1d5752c07f43},0 en FxProperties
+            // y reinicia audiosrv para aplicar release <10ms en LEQ
+            let script = r#"
+                $renderPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
+                if (Test-Path $renderPath) {
+                    Get-ChildItem $renderPath | ForEach-Object {
+                        $fxPath = Join-Path $_.PSPath "FxProperties"
+                        if (Test-Path $fxPath) {
+                            Set-ItemProperty -Path $fxPath -Name "{c2f038f4-41d5-4521-b1e1-1d5752c07f43},0" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+                        }
+                    }
+                }
+                Restart-Service -Name audiosrv -Force
+            "#;
+
+            let file_wide: Vec<u16> = OsStr::new("powershell.exe")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let verb_wide: Vec<u16> = OsStr::new("runas")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let params_wide: Vec<u16> = OsStr::new(&format!("-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{}\"", script))
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let instance = unsafe {
+                ShellExecuteW(
+                    None,
+                    PCWSTR(verb_wide.as_ptr()),
+                    PCWSTR(file_wide.as_ptr()),
+                    PCWSTR(params_wide.as_ptr()),
+                    PCWSTR(std::ptr::null()),
+                    SW_HIDE,
+                )
+            };
+
             let is_success = (instance.0 as isize) > 32;
             Ok(is_success)
         }

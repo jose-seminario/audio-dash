@@ -43,6 +43,7 @@ pub fn generate_apo_config(
     headphone_filters: &[String],
     hrtf_filename: Option<&str>,
     is_clutch: bool,
+    distance_aware: bool,
 ) -> String {
     let mut config = String::new();
     config.push_str("# ========================================================\n");
@@ -79,19 +80,28 @@ pub fn generate_apo_config(
         config.push_str("Channel: all\n\n");
     }
 
-    // FASE 2: Compresor Dinámico VST (LoudMax con Ataque Conservado: -24.0, -1.0, 12.0, 80.0)
+    // FASE 2: Compresor Dinámico VST (LoudMax con Ataque Conservado o Distance Aware)
     let comp_ratio = (values.compresion / 100.0).clamp(0.0, 1.0);
     if comp_ratio > 0.02 {
         let vst_path = get_vst_plugin_path();
 
-        config.push_str("# --- FASE 2: COMPRESION DINAMICA VST (ATAQUE CONSERVADO) ---\n");
+        config.push_str("# --- FASE 2: COMPRESION DINAMICA VST ---\n");
         if vst_path.exists() {
-            config.push_str(&format!(
-                "VSTPlugin: Library \"{}\" -24.0 -1.0 12.0 80.0\n",
-                vst_path.to_string_lossy()
-            ));
+            if distance_aware {
+                // Modo Distancia ON: Compresión suave (-12 dB, Ceiling -1 dB, Atk 15ms, Rel 100ms) para percibir distancias
+                config.push_str(&format!(
+                    "VSTPlugin: Library \"{}\" -12.0 -1.0 15.0 100.0\n",
+                    vst_path.to_string_lossy()
+                ));
+            } else {
+                // Modo Distancia OFF: Compresión agresiva (-24 dB, Ceiling -1 dB, Atk 12ms, Rel 80ms) para máximo realce de pasos
+                config.push_str(&format!(
+                    "VSTPlugin: Library \"{}\" -24.0 -1.0 12.0 80.0\n",
+                    vst_path.to_string_lossy()
+                ));
+            }
         } else {
-            let make_up_gain = comp_ratio * 4.5;
+            let make_up_gain = comp_ratio * (if distance_aware { 2.5 } else { 4.5 });
             config.push_str(
                 "# LoudMax VST en proceso de descarga - Compensacion de ganancia nativa activa:\n",
             );
@@ -121,6 +131,9 @@ pub fn generate_apo_config(
     let final_preamp = (dynamic_anti_clip + maestro_offset).clamp(-30.0, 0.0);
 
     config.push_str(&format!("Preamp: {:.1} dB\n", final_preamp));
+
+    // Filtro Pasa-Altos Base Táctico (70 Hz, Q 0.707): Limpia energía sísmica e infragravitatoria independientemente de los sliders
+    config.push_str("Filter: ON HPQ Fc 70 Hz Q 0.707\n");
 
     // 1. Slider "Pasos" (0 - 10): Boost 2500 Hz & 4000 Hz
     if pasos_ratio > 0.05 {
@@ -202,10 +215,12 @@ pub fn update_eq_profile(
     headphone_filters: Vec<String>,
     hrtf_filename: Option<String>,
     is_clutch: Option<bool>,
+    distance_aware: Option<bool>,
 ) -> Result<(), String> {
     let config_path = get_user_config_path();
     let tmp_path = config_path.with_extension("tmp");
     let clutch_active = is_clutch.unwrap_or_else(crate::clutch_mode::is_clutch_active);
+    let distance_aware_active = distance_aware.unwrap_or(false);
 
     let content = generate_apo_config(
         &slider_values,
@@ -213,6 +228,7 @@ pub fn update_eq_profile(
         &headphone_filters,
         hrtf_filename.as_deref(),
         clutch_active,
+        distance_aware_active,
     );
 
     {

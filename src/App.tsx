@@ -22,6 +22,7 @@ import {
   Headphones,
   Radio,
   Sparkles,
+  Target,
 } from "lucide-react";
 
 // Safe wrapper for Tauri invoke (falls back gracefully in browser dev mode)
@@ -98,53 +99,67 @@ const HRTF_OPTIONS: HrtfProfile[] = [
     id: "dolby_atmos_ref",
     name: "Dolby Atmos Binaural Reference",
     brand: "Dolby",
-    description: "Inmersión espacial con percepción clara de verticalidad",
+    description: "Inmersión espacial balanceada de amplio espectro",
     filename: "dolby_atmos_ref.wav",
   },
 ];
 
 const DEFAULT_GAME_SLIDERS: SliderValues = {
   pasos: 7.5,
-  bombas: 6.0,
-  disparos: 5.0,
-  claridad: 4.0,
-  compresion: 65.0,
-  atenuacionPropia: 0.0,
-  maestro: -2.0,
+  bombas: 4.0,
+  disparos: 3.5,
+  claridad: 6.0,
+  compresion: 65,
+  atenuacionPropia: -6.0,
+  maestro: 0,
 };
 
 const DEFAULT_NORMAL_SLIDERS: SliderValues = {
-  pasos: 0.0,
-  bombas: 0.0,
-  disparos: 0.0,
-  claridad: 0.0,
-  compresion: 0.0,
-  atenuacionPropia: 0.0,
-  maestro: 0.0,
+  pasos: 0,
+  bombas: 0,
+  disparos: 0,
+  claridad: 0,
+  compresion: 0,
+  atenuacionPropia: 0,
+  maestro: 0,
 };
 
 export const App: React.FC = () => {
+  // Profiles and active mode state
   const [profileMode, setProfileMode] = useState<ProfileMode>("auto");
   const [activeProfile, setActiveProfile] = useState<ProfileType>("JUEGOS");
   const [currentProcess, setCurrentProcess] = useState<string>("Buscando...");
-  const [isGameActive, setIsGameActive] = useState<boolean>(true);
+  const [isGameActive, setIsGameActive] = useState<boolean>(false);
 
-  const [selectedHeadphoneId, setSelectedHeadphoneId] = useState<string>("hyperx_cloud_2");
-  const [selectedHrtf, setSelectedHrtf] = useState<string>("sennheiser_gsx.wav");
-  const [isClutchActive, setIsClutchActive] = useState<boolean>(false);
-
+  // Per-profile slider values
   const [gameSliders, setGameSliders] = useState<SliderValues>(DEFAULT_GAME_SLIDERS);
   const [normalSliders, setNormalSliders] = useState<SliderValues>(DEFAULT_NORMAL_SLIDERS);
 
-  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
+  // Hardware AutoEQ Profile
+  const [selectedHeadphoneId, setSelectedHeadphoneId] = useState<string>("flat");
 
+  // HeSuVi HRTF Positional Audio Profile
+  const [selectedHrtf, setSelectedHrtf] = useState<string>("sennheiser_gsx.wav");
+
+  // Clutch Mode state (Hotkeyed via Ctrl+Shift+C)
+  const [isClutchActive, setIsClutchActive] = useState<boolean>(false);
+
+  // Distance Aware mode state
+  const [distanceAware, setDistanceAware] = useState<boolean>(false);
+  const distanceAwareRef = useRef(distanceAware);
+  distanceAwareRef.current = distanceAware;
+
+  // A/B Testing comparison state (Temporary bypass while mouse down)
+  const [isAbBypassActive, setIsAbBypassActive] = useState<boolean>(false);
+
+  // System setup & audit modal states
+  const [dependencyStatus, setDependencyStatus] = useState<DependencyStatus | null>(null);
+  const [showWelcome, setShowWelcome] = useState<boolean>(false);
   const [isAuditOpen, setIsAuditOpen] = useState<boolean>(false);
   const [auditData, setAuditData] = useState<SystemAuditResult | null>(null);
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
-
-  const [dependencyStatus, setDependencyStatus] = useState<DependencyStatus | null>(null);
-  const [showWelcome, setShowWelcome] = useState<boolean>(false);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
 
   const activeSliders = activeProfile === "JUEGOS" ? gameSliders : normalSliders;
 
@@ -183,11 +198,13 @@ export const App: React.FC = () => {
       values: SliderValues,
       profile: ProfileType,
       hrtfFile?: string,
-      clutch?: boolean
+      clutch?: boolean,
+      distAware?: boolean
     ) => {
       try {
         const hrtf = hrtfFile !== undefined ? hrtfFile : selectedHrtfRef.current;
         const cl = clutch !== undefined ? clutch : isClutchActiveRef.current;
+        const dist = distAware !== undefined ? distAware : distanceAwareRef.current;
 
         await tauriInvoke("update_eq_profile", {
           sliderValues: values,
@@ -195,6 +212,7 @@ export const App: React.FC = () => {
           headphoneFilters: getActiveHeadphoneFilters(),
           hrtfFilename: hrtf || null,
           isClutch: cl,
+          distanceAware: dist,
         });
       } catch (err) {
         console.error("Error sincronizando archivo de EQ:", err);
@@ -259,11 +277,63 @@ export const App: React.FC = () => {
         currentVals,
         activeProfileRef.current,
         selectedHrtfRef.current,
-        newState
+        newState,
+        distanceAwareRef.current
       );
       triggerAudioRefresh();
     } catch (e) {
       console.error("Error toggling clutch mode:", e);
+    }
+  };
+
+  const handleToggleDistanceAware = () => {
+    const nextVal = !distanceAware;
+    setDistanceAware(nextVal);
+    distanceAwareRef.current = nextVal;
+    const values =
+      activeProfileRef.current === "JUEGOS"
+        ? gameSlidersRef.current
+        : normalSlidersRef.current;
+    syncEqProfile(values, activeProfileRef.current, undefined, undefined, nextVal);
+    triggerAudioRefresh();
+  };
+
+  const handleAbMouseDown = async () => {
+    setIsAbBypassActive(true);
+    try {
+      await tauriInvoke("update_eq_profile", {
+        sliderValues: DEFAULT_NORMAL_SLIDERS,
+        profile: "NORMAL",
+        headphoneFilters: [],
+        hrtfFilename: null,
+        isClutch: false,
+        distanceAware: false,
+      });
+      await tauriInvoke("force_audio_refresh");
+    } catch (err) {
+      console.error("Error activando Bypass A/B:", err);
+    }
+  };
+
+  const handleAbMouseUp = async () => {
+    if (!isAbBypassActive) return;
+    setIsAbBypassActive(false);
+    try {
+      const currentVals =
+        activeProfileRef.current === "JUEGOS"
+          ? gameSlidersRef.current
+          : normalSlidersRef.current;
+      await tauriInvoke("update_eq_profile", {
+        sliderValues: currentVals,
+        profile: activeProfileRef.current,
+        headphoneFilters: getActiveHeadphoneFilters(),
+        hrtfFilename: selectedHrtfRef.current || null,
+        isClutch: isClutchActiveRef.current,
+        distanceAware: distanceAwareRef.current,
+      });
+      await tauriInvoke("force_audio_refresh");
+    } catch (err) {
+      console.error("Error restaurando perfil tras A/B:", err);
     }
   };
 
@@ -332,7 +402,8 @@ export const App: React.FC = () => {
               currentVals,
               activeProfileRef.current,
               selectedHrtfRef.current,
-              newState
+              newState,
+              distanceAwareRef.current
             );
             triggerAudioRefresh();
           });
@@ -467,6 +538,24 @@ export const App: React.FC = () => {
             <span className="hidden lg:inline text-[9px] px-1 py-0.2 rounded bg-black/40 border border-current font-normal">
               Ctrl+Shift+C
             </span>
+          </button>
+
+          {/* A/B Comparison Testing Button */}
+          <button
+            onMouseDown={handleAbMouseDown}
+            onMouseUp={handleAbMouseUp}
+            onTouchStart={handleAbMouseDown}
+            onTouchEnd={handleAbMouseUp}
+            onMouseLeave={handleAbMouseUp}
+            title="Mantén presionado para escuchar el audio original de Windows (Bypass) y suelta para reactivar el audio táctico de Audio Dash"
+            className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-bold flex items-center space-x-1.5 transition-all cursor-pointer select-none ${
+              isAbBypassActive
+                ? "bg-amber-500 text-tactical-900 border-amber-300 shadow-md shadow-amber-500/40 animate-pulse scale-95"
+                : "bg-tactical-800 hover:bg-tactical-700 border-amber-400/40 text-amber-300"
+            }`}
+          >
+            <Volume2 className="w-3.5 h-3.5" />
+            <span>{isAbBypassActive ? "ORIGINAL (BYPASS)" : "A/B TEST"}</span>
           </button>
 
           {/* Refresh Audio Button */}
@@ -670,14 +759,34 @@ export const App: React.FC = () => {
 
         {/* Perceptual & Dynamic Sliders */}
         <section className="space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
             <h3 className="text-sm font-bold font-mono tracking-wider text-slate-200 flex items-center gap-2">
               <SlidersHorizontal className="w-4 h-4 text-tactical-accent" />
               CONTROLES DE INGENIERÍA PERCEPTUAL & DINÁMICA
             </h3>
-            <span className="text-[11px] font-mono text-slate-400">
-              Escritura atómica en %APPDATA%\AudioDash\config.txt
-            </span>
+
+            {/* Toggle Modo Distancia (Distance Aware) */}
+            <div className="flex items-center space-x-2 bg-tactical-850 px-3 py-1.5 rounded-lg border border-tactical-700">
+              <Target className="w-3.5 h-3.5 text-tactical-accent shrink-0" />
+              <span className="text-[11px] font-mono text-slate-300 font-bold">
+                Modo Distancia:
+              </span>
+              <button
+                onClick={handleToggleDistanceAware}
+                title={
+                  distanceAware
+                    ? "Compresión suave (-12 dB): Preserva la atenuación de volumen por distancia para calcular la lejanía exacta de pasos y disparos."
+                    : "Compresión agresiva (-24 dB): Máximo realce de volumen en pasos lejanos a expensas de la percepción de profundidad."
+                }
+                className={`px-2.5 py-0.5 rounded text-[10px] font-mono font-bold transition-all ${
+                  distanceAware
+                    ? "bg-tactical-accent text-tactical-900 shadow-sm shadow-tactical-accent/30"
+                    : "bg-tactical-800 text-slate-400 hover:text-slate-200 border border-tactical-700"
+                }`}
+              >
+                {distanceAware ? "ON (-12 dB SUAVE)" : "OFF (-24 dB AGRESIVO)"}
+              </button>
+            </div>
           </div>
 
           <AudioSliders
