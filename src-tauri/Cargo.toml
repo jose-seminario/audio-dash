@@ -1,6 +1,6 @@
 [package]
 name = "audio-dash"
-version = "1.2.0"
+version = "1.3.0"
 description = "Audio Dash - Tactical Windows 11 Audio Optimizer"
 authors = ["AudioDash Team"]
 edition = "2021"

@@ -109,6 +109,7 @@ const DEFAULT_GAME_SLIDERS: SliderValues = {
   disparos: 5.0,
   claridad: 4.0,
   compresion: 65.0,
+  atenuacionPropia: 0.0,
   maestro: -2.0,
 };
 
@@ -118,6 +119,7 @@ const DEFAULT_NORMAL_SLIDERS: SliderValues = {
   disparos: 0.0,
   claridad: 0.0,
   compresion: 0.0,
+  atenuacionPropia: 0.0,
   maestro: 0.0,
 };
 
@@ -439,11 +441,11 @@ export const App: React.FC = () => {
                 AUDIO DASH
               </span>
               <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-tactical-accent/20 text-tactical-accent border border-tactical-accent/40">
-                v1.2.0 OPEN SOURCE
+                v1.3.0 OPEN SOURCE
               </span>
             </div>
             <p className="text-[10px] font-mono text-slate-400">
-              TACTICAL AUDIO OPTIMIZER • HRTF 7.1 • CLUTCH MODE • MMCSS
+              TACTICAL AUDIO OPTIMIZER • ANTI-DISCORD & ANTI-CLIPPING
             </p>
           </div>
         </div>

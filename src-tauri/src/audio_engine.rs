@@ -14,6 +14,8 @@ pub struct SliderValues {
     pub disparos: f32,    // 0 - 10
     pub claridad: f32,    // 0 - 10
     pub compresion: f32,  // 0 - 100%
+    #[serde(rename = "atenuacionPropia", alias = "atenuacion_propia", default)]
+    pub atenuacion_propia: f32, // 0 a -12 dB (Canal Central C)
     pub maestro: f32,     // -12 to 0 dB
 }
 
@@ -44,7 +46,7 @@ pub fn generate_apo_config(
 ) -> String {
     let mut config = String::new();
     config.push_str("# ========================================================\n");
-    config.push_str("# Audio Dash v1.2.0 - Tactical Windows 11 Audio Optimizer\n");
+    config.push_str("# Audio Dash v1.3.0 - Tactical Windows 11 Audio Optimizer\n");
     config.push_str(&format!("# Active Profile: {}\n", profile));
     config.push_str("# ========================================================\n\n");
 
@@ -54,9 +56,9 @@ pub fn generate_apo_config(
         return config;
     }
 
-    // FASE 1: Calibración Hardware AutoEQ
+    // FASE 1: Calibración Hardware AutoEQ (FUERA DEL IF - AFECTA A TODO EL SISTEMA)
     if !headphone_filters.is_empty() {
-        config.push_str("# --- FASE 1: CALIBRACION HARDWARE AUTOEQ ---\n");
+        config.push_str("# --- FASE 1: CALIBRACION HARDWARE AUTOEQ (SISTEMA COMPLETO) ---\n");
         for filter in headphone_filters {
             config.push_str(filter);
             config.push('\n');
@@ -64,20 +66,29 @@ pub fn generate_apo_config(
         config.push('\n');
     }
 
-    // FASE 2: Compresor Dinámico VST (LoudMax Lookahead Limiter)
+    // ENRUTAMIENTO CONDICIONAL: PROTECCIÓN ANTI-DISCORD (SOLO AFECTA AL JUEGO)
+    config.push_str("If: app:cod.exe\n\n");
+
+    // 1. ATENUACIÓN DEL CANAL CENTRAL (Pre-Mix: amortigua disparos y recargas propias)
+    if values.atenuacion_propia < -0.05 {
+        let att_db = values.atenuacion_propia.clamp(-12.0, 0.0);
+        config.push_str("# --- ATENUACION CANAL CENTRAL (DISPAROS Y RECARGAS PROPIAS) ---\n");
+        config.push_str("Stage: pre-mix\n");
+        config.push_str("Channel: C\n");
+        config.push_str(&format!("Preamp: {:.1} dB\n", att_db));
+        config.push_str("Channel: all\n\n");
+    }
+
+    // FASE 2: Compresor Dinámico VST (LoudMax con Ataque Conservado: -24.0, -1.0, 12.0, 80.0)
     let comp_ratio = (values.compresion / 100.0).clamp(0.0, 1.0);
     if comp_ratio > 0.02 {
-        let thresh_db = -comp_ratio * 28.0; // 0.0 to -28.0 dB
-        let ceiling_db = -1.0;              // -1.0 dB anti-clipping margin
         let vst_path = get_vst_plugin_path();
 
-        config.push_str("# --- FASE 2: COMPRESOR DINAMICO & LIMITADOR ---\n");
+        config.push_str("# --- FASE 2: COMPRESION DINAMICA VST (ATAQUE CONSERVADO) ---\n");
         if vst_path.exists() {
             config.push_str(&format!(
-                "VSTPlugin: Library \"{}\" {:.1} {:.1}\n",
-                vst_path.to_string_lossy(),
-                thresh_db,
-                ceiling_db
+                "VSTPlugin: Library \"{}\" -24.0 -1.0 12.0 80.0\n",
+                vst_path.to_string_lossy()
             ));
         } else {
             let make_up_gain = comp_ratio * 4.5;
@@ -92,13 +103,26 @@ pub fn generate_apo_config(
         config.push('\n');
     }
 
-    // FASE 3: Controles de Ingeniería Perceptual
-    config.push_str("# --- FASE 3: CURVA TACTICA PERCEPTUAL ---\n");
-    let preamp_db = values.maestro.clamp(-12.0, 0.0);
-    config.push_str(&format!("Preamp: {:.1} dB\n", preamp_db));
+    // FASE 3: Controles de Ingeniería Perceptual con Preamp Dinámico Anti-Clipping
+    config.push_str("# --- FASE 3: CURVA TACTICA PERCEPTUAL & PREAMP ANTI-CLIPPING ---\n");
+
+    // Preamp Dinámico Anti-Clipping: Suma de picos máximos activos + margen de seguridad (-2.0 dB)
+    let pasos_ratio = (values.pasos / 10.0).clamp(0.0, 1.0);
+    let gain_pasos = if pasos_ratio > 0.05 { (3.5 * pasos_ratio) + (2.5 * pasos_ratio) } else { 0.0 };
+
+    let claridad_ratio = (values.claridad / 10.0).clamp(0.0, 1.0);
+    let gain_claridad = if claridad_ratio > 0.05 { 2.0 * claridad_ratio } else { 0.0 };
+
+    let gain_clutch = if is_clutch { 8.0 + 4.0 } else { 0.0 };
+
+    let total_boost = gain_pasos + gain_claridad + gain_clutch;
+    let dynamic_anti_clip = -(total_boost + 2.0);
+    let maestro_offset = values.maestro.clamp(-12.0, 0.0);
+    let final_preamp = (dynamic_anti_clip + maestro_offset).clamp(-30.0, 0.0);
+
+    config.push_str(&format!("Preamp: {:.1} dB\n", final_preamp));
 
     // 1. Slider "Pasos" (0 - 10): Boost 2500 Hz & 4000 Hz
-    let pasos_ratio = (values.pasos / 10.0).clamp(0.0, 1.0);
     if pasos_ratio > 0.05 {
         let gain_2500 = 3.5 * pasos_ratio;
         let gain_4000 = 2.5 * pasos_ratio;
@@ -135,7 +159,6 @@ pub fn generate_apo_config(
     }
 
     // 4. Slider "Claridad" (0 - 10): Peaking at 1500 Hz
-    let claridad_ratio = (values.claridad / 10.0).clamp(0.0, 1.0);
     if claridad_ratio > 0.05 {
         let peak_gain = 2.0 * claridad_ratio;
         config.push_str(&format!(
@@ -151,12 +174,15 @@ pub fn generate_apo_config(
         config.push_str("Filter: ON PK Fc 4000 Hz Gain +4.00 dB Q 1.20\n");
     }
 
-    // FASE 4: Virtualización Espacial HRTF / HeSuVi (Convolución 7.1)
+    // CIERRE DEL ENRUTAMIENTO CONDICIONAL
+    config.push_str("\nEndIf:\n\n");
+
+    // FASE 4: Virtualización Espacial HRTF / HeSuVi (FUERA DEL IF - AFECTA A TODO EL SISTEMA)
     if let Some(filename) = hrtf_filename {
         if !filename.is_empty() {
             let hrir_path = crate::hrtf_engine::get_hrir_profile_path(filename);
             if hrir_path.exists() {
-                config.push_str("\n# --- FASE 4: VIRTUALIZACION ESPACIAL HRTF (7.1 SURROUND) ---\n");
+                config.push_str("# --- FASE 4: VIRTUALIZACION ESPACIAL HRTF (7.1 SURROUND) ---\n");
                 config.push_str(&format!(
                     "Convolution: \"{}\"\n",
                     hrir_path.to_string_lossy()

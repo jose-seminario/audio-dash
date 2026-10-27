@@ -1,10 +1,11 @@
 export interface SliderValues {
-  pasos: number;       // 0 - 10: Boost 2500Hz & 4000Hz (Footsteps)
-  bombas: number;      // 0 - 10: High-Pass 120Hz & Low-Shelf 200Hz (Explosions)
-  disparos: number;    // 0 - 10: High-Shelf 6000Hz (Gunshots tamer)
-  claridad: number;    // 0 - 10: Peaking 1500Hz (Voice clarity)
-  compresion: number;  // 0 - 100%: Dynamic Loudness VST Limiter
-  maestro: number;     // -12 to 0 dB: Preamp Master Control
+  pasos: number;            // 0 - 10: Boost 2500Hz & 4000Hz (Footsteps)
+  bombas: number;           // 0 - 10: High-Pass 120Hz & Low-Shelf 200Hz (Explosions)
+  disparos: number;         // 0 - 10: High-Shelf 6000Hz (Gunshots tamer)
+  claridad: number;         // 0 - 10: Peaking 1500Hz (Voice clarity)
+  compresion: number;       // 0 - 100%: Dynamic Loudness VST Limiter
+  atenuacionPropia: number; // 0 a -12 dB: Atenuación canal central (C) contra propios disparos
+  maestro: number;          // -12 to 0 dB: Preamp Master Control
 }
 
 export type ProfileType = 'JUEGOS' | 'NORMAL';

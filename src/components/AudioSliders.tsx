@@ -8,6 +8,7 @@ import {
   Sparkles,
   RotateCcw,
   Activity,
+  VolumeX,
 } from "lucide-react";
 
 interface AudioSlidersProps {
@@ -19,6 +20,7 @@ interface AudioSlidersProps {
 
 const COMPETITIVE_DEFAULTS: Record<keyof SliderValues, number> = {
   compresion: 65,
+  atenuacionPropia: 0,
   pasos: 7.5,
   bombas: 6.0,
   disparos: 5.0,
@@ -57,6 +59,19 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
       icon: <Activity className="w-5 h-5 text-tactical-accent" />,
       color: "text-tactical-accent",
       glow: "hover:border-tactical-accent/50",
+    },
+    {
+      key: "atenuacionPropia",
+      label: "Atenuación Disparos Propios",
+      sublabel: "Canal Central (C) Pre-Mix (0 a -12 dB)",
+      description: "Atenúa recargas y disparos de tu propia arma en el canal central sin alterar pasos en L/R",
+      min: -12,
+      max: 0,
+      step: 0.5,
+      unit: " dB",
+      icon: <VolumeX className="w-5 h-5 text-amber-400" />,
+      color: "text-amber-400",
+      glow: "hover:border-amber-400/50",
     },
     {
       key: "pasos",
@@ -113,8 +128,8 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
     {
       key: "maestro",
       label: "Control Maestro (Preamp)",
-      sublabel: "Compensación Anti-Clipping",
-      description: "Margen de ganancia general para evitar saturación digital en picos",
+      sublabel: "Margen de Ganancia General",
+      description: "Ajuste fino de volumen master que se complementa con la protección anti-clipping",
       min: -12,
       max: 0,
       step: 0.5,
@@ -138,6 +153,7 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
         const val = values[item.key];
         const isMaster = item.key === "maestro";
         const isCompression = item.key === "compresion";
+        const isOwnAtt = item.key === "atenuacionPropia";
 
         return (
           <div
@@ -145,8 +161,8 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
             className={`p-4 rounded-lg bg-tactical-850/80 border border-tactical-700/80 transition-all duration-200 ${item.glow} ${
               isMaster ? "md:col-span-2 bg-tactical-800/90 border-tactical-600" : ""
             } ${isCompression ? "border-tactical-accent/40 bg-tactical-800/90" : ""} ${
-              disabled ? "opacity-50 pointer-events-none" : ""
-            }`}
+              isOwnAtt ? "border-amber-400/30 bg-tactical-800/80" : ""
+            } ${disabled ? "opacity-50 pointer-events-none" : ""}`}
           >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2.5">
@@ -202,7 +218,7 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
             <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-1 px-1">
               <span>{item.min}{item.unit}</span>
               <span>
-                {isMaster ? "-6 dB" : isCompression ? "50%" : "5"}
+                {isMaster ? "-6 dB" : isCompression ? "50%" : isOwnAtt ? "-6 dB" : "5"}
               </span>
               <span>{item.max}{item.unit}</span>
             </div>
