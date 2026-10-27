@@ -9,6 +9,14 @@ interface AudioSlidersProps {
   disabled?: boolean;
 }
 
+const COMPETITIVE_DEFAULTS: Record<keyof SliderValues, number> = {
+  pasos: 7.5,
+  bombas: 6.0,
+  disparos: 5.0,
+  claridad: 4.0,
+  maestro: -2.0,
+};
+
 export const AudioSliders: React.FC<AudioSlidersProps> = ({
   values,
   onChange,
@@ -97,7 +105,7 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
 
   const handleReset = (key: keyof SliderValues) => {
     if (disabled) return;
-    const defaultVal = key === "maestro" ? -2.0 : 5;
+    const defaultVal = COMPETITIVE_DEFAULTS[key];
     onChange(key, defaultVal);
     setTimeout(() => onRelease(), 50);
   };

@@ -4,14 +4,12 @@ use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct DependencyStatus {
-    pub equalizer_apo_installed: boolean_type,
+    pub equalizer_apo_installed: bool,
     pub config_linked: bool,
     pub installed_path: Option<String>,
     pub first_run_completed: bool,
     pub details: String,
 }
-
-type boolean_type = bool;
 
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct AppSettings {

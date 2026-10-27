@@ -199,7 +199,7 @@ pub async fn request_system_optimization() -> Result<bool, String> {
             };
 
             // ShellExecute returns HINSTANCE > 32 on success
-            let is_success = (instance.0 as usize) > 32;
+            let is_success = (instance.0 as isize) > 32;
             Ok(is_success)
         }
         #[cfg(not(windows))]

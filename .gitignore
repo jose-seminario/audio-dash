@@ -1,0 +1,29 @@
+# Node & Frontend dependencies
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Tauri & Rust build artifacts
+src-tauri/target/
+src-tauri/gen/
+
+# Logs & Environment
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+.env
+.env.*
+!.env.example
+
+# IDE & OS files
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+Thumbs.db
+[Dd]esktop.ini

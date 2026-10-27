@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   SliderValues,
   ProfileType,
@@ -125,6 +125,21 @@ export const App: React.FC = () => {
 
   const activeSliders = activeProfile === "JUEGOS" ? gameSliders : normalSliders;
 
+  // Sync state to refs for decoupled, leak-free event listeners
+  const profileModeRef = useRef(profileMode);
+  profileModeRef.current = profileMode;
+
+  const gameSlidersRef = useRef(gameSliders);
+  gameSlidersRef.current = gameSliders;
+
+  const normalSlidersRef = useRef(normalSliders);
+  normalSlidersRef.current = normalSliders;
+
+  const activeProfileRef = useRef(activeProfile);
+  activeProfileRef.current = activeProfile;
+
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Sync EQ configuration to backend file
   const syncEqProfile = useCallback(
     async (values: SliderValues, profile: ProfileType) => {
@@ -191,9 +206,11 @@ export const App: React.FC = () => {
     syncEqProfile(activeSliders, activeProfile);
   }, []);
 
-  // Listen to background window detector events if in Tauri
+  // Listen to background window detector events if in Tauri (registers strictly once)
   useEffect(() => {
     let unlisten: (() => void) | undefined;
+    let isMounted = true;
+
     (async () => {
       if (
         typeof window !== "undefined" &&
@@ -201,18 +218,22 @@ export const App: React.FC = () => {
       ) {
         try {
           const { listen } = await import("@tauri-apps/api/event");
-          unlisten = await listen<{ process_name: string; is_game: boolean }>(
+          const fn = await listen<{ process_name: string; is_game: boolean }>(
             "window_changed",
             (event) => {
+              if (!isMounted) return;
               const { process_name, is_game } = event.payload;
               setCurrentProcess(process_name);
               setIsGameActive(is_game);
 
-              if (profileMode === "auto") {
+              if (profileModeRef.current === "auto") {
                 const targetProfile: ProfileType = is_game ? "JUEGOS" : "NORMAL";
                 setActiveProfile((prev) => {
                   if (prev !== targetProfile) {
-                    const values = targetProfile === "JUEGOS" ? gameSliders : normalSliders;
+                    const values =
+                      targetProfile === "JUEGOS"
+                        ? gameSlidersRef.current
+                        : normalSlidersRef.current;
                     syncEqProfile(values, targetProfile);
                     triggerAudioRefresh();
                   }
@@ -221,6 +242,12 @@ export const App: React.FC = () => {
               }
             }
           );
+
+          if (isMounted) {
+            unlisten = fn;
+          } else {
+            fn();
+          }
         } catch (e) {
           console.warn("No se pudo registrar listener de eventos Tauri:", e);
         }
@@ -228,29 +255,59 @@ export const App: React.FC = () => {
     })();
 
     return () => {
+      isMounted = false;
       if (unlisten) unlisten();
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
     };
-  }, [profileMode, gameSliders, normalSliders, syncEqProfile, triggerAudioRefresh]);
+  }, [syncEqProfile, triggerAudioRefresh]);
 
+  // Debounced slider handler to eliminate disk thrashing during drag
   const handleSliderChange = (key: keyof SliderValues, val: number) => {
     if (activeProfile === "JUEGOS") {
       const updated = { ...gameSliders, [key]: val };
       setGameSliders(updated);
-      syncEqProfile(updated, "JUEGOS");
+      gameSlidersRef.current = updated;
+
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = setTimeout(() => {
+        syncEqProfile(updated, "JUEGOS");
+      }, 75);
     } else {
       const updated = { ...normalSliders, [key]: val };
       setNormalSliders(updated);
-      syncEqProfile(updated, "NORMAL");
+      normalSlidersRef.current = updated;
+
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = setTimeout(() => {
+        syncEqProfile(updated, "NORMAL");
+      }, 75);
     }
   };
 
   const handleSliderRelease = () => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
+    // Immediate atomic flush on release
+    const currentValues =
+      activeProfileRef.current === "JUEGOS"
+        ? gameSlidersRef.current
+        : normalSlidersRef.current;
+    syncEqProfile(currentValues, activeProfileRef.current);
     triggerAudioRefresh();
   };
 
   const handleToggleProfile = (target: ProfileType) => {
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+      debounceTimerRef.current = null;
+    }
     setActiveProfile(target);
-    const values = target === "JUEGOS" ? gameSliders : normalSliders;
+    activeProfileRef.current = target;
+    const values = target === "JUEGOS" ? gameSlidersRef.current : normalSlidersRef.current;
     syncEqProfile(values, target);
     triggerAudioRefresh();
   };
