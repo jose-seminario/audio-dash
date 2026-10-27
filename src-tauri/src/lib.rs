@@ -1,4 +1,5 @@
 pub mod audio_engine;
+pub mod backup_system;
 pub mod clutch_mode;
 pub mod dependencies;
 pub mod hrtf_engine;
@@ -7,10 +8,11 @@ pub mod system_tweaks;
 pub mod window_monitor;
 
 use audio_engine::{ensure_vst_plugin_installed, force_audio_refresh, update_eq_profile};
+use backup_system::restore_defaults;
 use clutch_mode::{get_clutch_state, init_clutch_hotkey, toggle_clutch_mode};
 use dependencies::{check_system_dependencies, mark_first_run_completed};
 use hrtf_engine::{ensure_hrir_installed, get_available_hrtf_profiles};
-use system_audit::{apply_leq_tweak, audit_system, request_system_optimization};
+use system_audit::{apply_leq_tweak, audit_system, open_windows_sound_settings, request_system_optimization};
 use system_tweaks::apply_audiodg_affinity;
 use window_monitor::spawn_window_monitor;
 
@@ -42,6 +44,8 @@ pub fn run() {
             ensure_hrir_installed,
             toggle_clutch_mode,
             get_clutch_state,
+            restore_defaults,
+            open_windows_sound_settings,
         ])
         .run(tauri::generate_context!())
         .expect("Error al ejecutar Audio Dash");

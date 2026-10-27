@@ -19,6 +19,9 @@ pub struct SystemAuditResult {
 
 #[tauri::command]
 pub fn audit_system() -> SystemAuditResult {
+    // Asegurar backup inicial del estado de fábrica
+    let _ = crate::backup_system::create_backup_if_not_exists();
+
     let mut checks = Vec::new();
     let mut all_optimal = true;
 
@@ -47,39 +50,52 @@ pub fn audit_system() -> SystemAuditResult {
     }
 
     // 2. Spatial Sound Check (Sonido Espacial)
-    let spatial_disabled = check_spatial_sound();
-    if !spatial_disabled {
+    let (spatial_active, spatial_name) = check_spatial_sound_real();
+    if spatial_active {
         all_optimal = false;
         checks.push(AuditCheckItem {
             id: "spatial_sound".to_string(),
-            name: "Sonido Espacial (Windows Sonic / Dolby)".to_string(),
+            name: "Sonido Espacial de Windows".to_string(),
             status: "warning".to_string(),
-            current_value: "Activo (Virtualización)".to_string(),
-            recommended: "Desactivado (Estéreo Directo)".to_string(),
-            description: "La virtualización espacial altera la respuesta frecuencial de pasos lejanos."
+            current_value: format!("Activo ({})", spatial_name),
+            recommended: "Desactivado (Estéreo 1:1)".to_string(),
+            description: "El sonido espacial nativo de Windows altera los filtros y añade retardo. Desactívalo para usar el Audio 3D de Audio Dash."
                 .to_string(),
         });
     } else {
         checks.push(AuditCheckItem {
             id: "spatial_sound".to_string(),
-            name: "Sonido Espacial (Windows Sonic / Dolby)".to_string(),
+            name: "Sonido Espacial de Windows".to_string(),
             status: "optimal".to_string(),
-            current_value: "Desactivado (Estéreo 1:1)".to_string(),
+            current_value: "Desactivado (Estéreo Puro)".to_string(),
             recommended: "Desactivado".to_string(),
-            description: "Señal estéreo directa sin ecualizaciones artificiales.".to_string(),
+            description: "Señal estéreo directa sin ecualizaciones artificiales de Windows.".to_string(),
         });
     }
 
-    // 3. Audio Sample Rate
-    checks.push(AuditCheckItem {
-        id: "sample_rate".to_string(),
-        name: "Formato de Muestreo de Audio".to_string(),
-        status: "optimal".to_string(),
-        current_value: "24 bits, 48000 Hz".to_string(),
-        recommended: "16/24 bits, 48000 Hz".to_string(),
-        description: "Frecuencia de muestreo estándar para sincronización óptima de baja latencia."
-            .to_string(),
-    });
+    // 3. Audio Sample Rate & Bit Depth Check
+    let (is_format_optimal, current_fmt_str) = check_audio_sample_rate_and_depth();
+    if !is_format_optimal {
+        all_optimal = false;
+        checks.push(AuditCheckItem {
+            id: "sample_rate".to_string(),
+            name: "Formato y Muestreo de Audio".to_string(),
+            status: "warning".to_string(),
+            current_value: current_fmt_str,
+            recommended: "24 bits, 48000 Hz".to_string(),
+            description: "Un formato diferente a 48000 Hz obliga a Windows a remuestrear el juego, causando distorsión y latencia añadida."
+                .to_string(),
+        });
+    } else {
+        checks.push(AuditCheckItem {
+            id: "sample_rate".to_string(),
+            name: "Formato y Muestreo de Audio".to_string(),
+            status: "optimal".to_string(),
+            current_value: current_fmt_str,
+            recommended: "24 bits, 48000 Hz".to_string(),
+            description: "Formato de estudio táctico sincronizado a 48000 Hz sin remuestreo.".to_string(),
+        });
+    }
 
     // 4. Windows Power Plan Check
     let power_optimal = check_power_plan();
@@ -111,17 +127,17 @@ pub fn audit_system() -> SystemAuditResult {
         all_optimal = false;
         checks.push(AuditCheckItem {
             id: "mmcss_optimization".to_string(),
-            name: "Planificador Multimedia (MMCSS) & Red".to_string(),
+            name: "Prioridad Máxima de Audio (Anti-Lag)".to_string(),
             status: "warning".to_string(),
             current_value: "Configuración estándar de Windows".to_string(),
-            recommended: "SystemResponsiveness: 0 | NetworkThrottling: Desactivado".to_string(),
+            recommended: "SystemResponsiveness: 0 | Red Ilimitada".to_string(),
             description: "Optimiza la asignación de reloj de CPU para el motor de audio y elimina el estrangulamiento de paquetes de red durante el juego."
                 .to_string(),
         });
     } else {
         checks.push(AuditCheckItem {
             id: "mmcss_optimization".to_string(),
-            name: "Planificador Multimedia (MMCSS) & Red".to_string(),
+            name: "Prioridad Máxima de Audio (Anti-Lag)".to_string(),
             status: "optimal".to_string(),
             current_value: "SystemResponsiveness: 0 | Red Ilimitada".to_string(),
             recommended: "Optimizado".to_string(),
@@ -147,21 +163,88 @@ fn check_audio_enhancements_registry() -> bool {
     }
 }
 
-fn check_spatial_sound() -> bool {
+/// Inspects Windows audio endpoints to check if Spatial Sound is active
+fn check_spatial_sound_real() -> (bool, String) {
     #[cfg(windows)]
     {
-        false
+        use winreg::enums::*;
+        use winreg::RegKey;
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        if let Ok(render_key) = hklm.open_subkey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render") {
+            for subkey_name in render_key.enum_keys().filter_map(|k| k.ok()) {
+                let fx_path = format!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render\\{}\\FxProperties", subkey_name);
+                if let Ok(fx_key) = hklm.open_subkey(&fx_path) {
+                    if let Ok(val) = fx_key.get_value::<String, _>("{b3f8fa53-0004-438e-9003-51a46e139bfc},2") {
+                        if !val.trim().is_empty() && val != "{00000000-0000-0000-0000-000000000000}" {
+                            return (true, "Sonic / Atmos / DTS".to_string());
+                        }
+                    }
+                    if let Ok(val) = fx_key.get_value::<String, _>("{b3f8fa53-0004-438e-9003-51a46e139bfc},3") {
+                        if !val.trim().is_empty() && val != "{00000000-0000-0000-0000-000000000000}" {
+                            return (true, "Sonic / Atmos / DTS".to_string());
+                        }
+                    }
+                }
+            }
+        }
+        (false, "Desactivado".to_string())
     }
     #[cfg(not(windows))]
     {
-        true
+        (false, "Desactivado".to_string())
+    }
+}
+
+/// Inspects Windows audio endpoints to extract sample rate and bit depth
+fn check_audio_sample_rate_and_depth() -> (bool, String) {
+    #[cfg(windows)]
+    {
+        use winreg::enums::*;
+        use winreg::RegKey;
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+
+        if let Ok(render_key) = hklm.open_subkey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render") {
+            for subkey_name in render_key.enum_keys().filter_map(|k| k.ok()) {
+                let prop_path = format!("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render\\{}\\Properties", subkey_name);
+                if let Ok(prop_key) = hklm.open_subkey(&prop_path) {
+                    if let Ok(bytes) = prop_key.get_raw_value("{a45c254e-df1c-4efd-8020-67d146a850e0},0") {
+                        if bytes.bytes.len() >= 40 {
+                            let sample_rate = u32::from_le_bytes([
+                                bytes.bytes[24],
+                                bytes.bytes[25],
+                                bytes.bytes[26],
+                                bytes.bytes[27],
+                            ]);
+                            let bits_per_sample = u16::from_le_bytes([
+                                bytes.bytes[38],
+                                bytes.bytes[39],
+                            ]);
+
+                            if sample_rate > 0 && bits_per_sample > 0 {
+                                let is_optimal = sample_rate == 48000 && bits_per_sample == 24;
+                                let desc = format!("{} bits, {} Hz", bits_per_sample, sample_rate);
+                                return (is_optimal, desc);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback standard assumption
+        (true, "24 bits, 48000 Hz".to_string())
+    }
+    #[cfg(not(windows))]
+    {
+        (true, "24 bits, 48000 Hz".to_string())
     }
 }
 
 fn check_power_plan() -> bool {
     #[cfg(windows)]
     {
-        false
+        let guid = crate::backup_system::get_current_power_scheme().to_lowercase();
+        // High Performance or Ultimate Performance
+        guid.contains("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c") || guid.contains("e9a42b02-d5df-448d-aa00-03f14749eb61")
     }
     #[cfg(not(windows))]
     {
@@ -192,10 +275,56 @@ fn check_mmcss_registry() -> bool {
     }
 }
 
+/// Opens the Windows 11 Sound Settings (ms-settings:sound) directly
+#[tauri::command]
+pub async fn open_windows_sound_settings() -> Result<bool, String> {
+    tokio::task::spawn_blocking(|| {
+        #[cfg(windows)]
+        {
+            use std::ffi::OsStr;
+            use std::os::windows::ffi::OsStrExt;
+            use windows::core::PCWSTR;
+            use windows::Win32::UI::Shell::ShellExecuteW;
+            use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+            let file_wide: Vec<u16> = OsStr::new("ms-settings:sound")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let verb_wide: Vec<u16> = OsStr::new("open")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let instance = unsafe {
+                ShellExecuteW(
+                    None,
+                    PCWSTR(verb_wide.as_ptr()),
+                    PCWSTR(file_wide.as_ptr()),
+                    PCWSTR(std::ptr::null()),
+                    PCWSTR(std::ptr::null()),
+                    SW_SHOWNORMAL,
+                )
+            };
+
+            Ok((instance.0 as isize) > 32)
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(true)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Invokes Windows UAC on-demand using ShellExecuteW ("runas")
 /// to apply system optimizations (Power plan, Equalizer APO link, MMCSS and Network tweaks).
 #[tauri::command]
 pub async fn request_system_optimization() -> Result<bool, String> {
+    // Asegurar backup inicial del estado de fábrica
+    let _ = crate::backup_system::create_backup_if_not_exists();
+
     tokio::task::spawn_blocking(|| {
         #[cfg(windows)]
         {
@@ -298,20 +427,6 @@ pub async fn apply_leq_tweak() -> Result<bool, String> {
             use windows::Win32::UI::Shell::ShellExecuteW;
             use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
-            #[cfg(windows)]
-            {
-                use winreg::enums::*;
-                use winreg::RegKey;
-                let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
-                if let Ok(render_key) = hklm.open_subkey("SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render") {
-                    for _subkey_name in render_key.enum_keys().filter_map(|k| k.ok()) {
-                        // Discovered render device
-                    }
-                }
-            }
-
-            // Script elevado que sobrescribe {c2f038f4-41d5-4521-b1e1-1d5752c07f43},0 en FxProperties
-            // y reinicia audiosrv para aplicar release <10ms en LEQ
             let script = r#"
                 $renderPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
                 if (Test-Path $renderPath) {

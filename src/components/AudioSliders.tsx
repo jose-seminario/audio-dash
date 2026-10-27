@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { SliderValues } from "../types/audio";
 import {
   Footprints,
@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Activity,
   VolumeX,
+  HelpCircle,
 } from "lucide-react";
 
 interface AudioSlidersProps {
@@ -20,12 +21,12 @@ interface AudioSlidersProps {
 
 const COMPETITIVE_DEFAULTS: Record<keyof SliderValues, number> = {
   compresion: 65,
-  atenuacionPropia: 0,
+  atenuacionPropia: -6.0,
   pasos: 7.5,
-  bombas: 6.0,
-  disparos: 5.0,
-  claridad: 4.0,
-  maestro: -2.0,
+  bombas: 4.0,
+  disparos: 3.5,
+  claridad: 6.0,
+  maestro: 0.0,
 };
 
 export const AudioSliders: React.FC<AudioSlidersProps> = ({
@@ -34,10 +35,13 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
   onRelease,
   disabled = false,
 }) => {
+  const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
+
   const slidersConfig: {
     key: keyof SliderValues;
     label: string;
     sublabel: string;
+    tooltip: string;
     description: string;
     min: number;
     max: number;
@@ -49,9 +53,10 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
   }[] = [
     {
       key: "compresion",
-      label: "Compresión Táctica (Loudness VST)",
-      sublabel: "Umbral Dinámico & Limitador -1.0 dB",
-      description: "Eleva pasos distantes y fija un techo estricto para que los disparos no te ensordezcan",
+      label: "Nivelador de Pasos y Disparos",
+      sublabel: "Compresor de estudio LoudMax VST",
+      tooltip: "Iguala el volumen: sube los sonidos débiles (pasos) y limita los fuertes (tiros).",
+      description: "Sube automáticamente las pisadas lejanas y fija un límite para que los disparos no te ensordezcan.",
       min: 0,
       max: 100,
       step: 5,
@@ -62,9 +67,10 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
     },
     {
       key: "atenuacionPropia",
-      label: "Atenuación Disparos Propios",
-      sublabel: "Canal Central (C) Pre-Mix (0 a -12 dB)",
-      description: "Atenúa recargas y disparos de tu propia arma en el canal central sin alterar pasos en L/R",
+      label: "Silenciar mis propios disparos",
+      sublabel: "Canal Central (C) Pre-Mix",
+      tooltip: "Amortigua tus propios tiros y recargas para no tapar los pasos rivales.",
+      description: "Amortigua el sonido de tu propia arma en el canal central sin alterar la dirección de pasos en los lados.",
       min: -12,
       max: 0,
       step: 0.5,
@@ -77,7 +83,8 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
       key: "pasos",
       label: "Pasos Enemigos",
       sublabel: "Realce 2.5 kHz & 4.0 kHz",
-      description: "Aumenta la presencia de pisadas y crujidos en superficies duras",
+      tooltip: "Aumenta el volumen de pisadas y movimientos enemigos en cualquier superficie.",
+      description: "Aumenta la presencia acústica de pasos, crujidos y saltos de los enemigos.",
       min: 0,
       max: 10,
       step: 1,
@@ -89,8 +96,9 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
     {
       key: "bombas",
       label: "Amortiguador de Bombas",
-      sublabel: "Corte Graves HP 120 Hz & LS 200 Hz",
-      description: "Corta subgraves para que las explosiones y ataques no enmascaren los pasos",
+      sublabel: "Corte de subgraves",
+      tooltip: "Reduce el estruendo de granadas y ataques aéreos para que no te ensordezcan.",
+      description: "Corta las frecuencias bajas para que las explosiones y ataques aéreos no tapen los pasos.",
       min: 0,
       max: 10,
       step: 1,
@@ -102,8 +110,9 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
     {
       key: "disparos",
       label: "Atenuador de Disparos",
-      sublabel: "Filtro High-Shelf 6.0 kHz (-3 dB)",
-      description: "Suaviza el chasquido estridente de armas automáticas reduciendo fatiga auditiva",
+      sublabel: "Filtro High-Shelf 6.0 kHz",
+      tooltip: "Suaviza el chasquido agudo de balas para evitar fatiga auditiva.",
+      description: "Suaviza el chasquido agudo de armas automáticas reduciendo el dolor de oídos en partidas largas.",
       min: 0,
       max: 10,
       step: 1,
@@ -115,8 +124,9 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
     {
       key: "claridad",
       label: "Claridad & Voces",
-      sublabel: "Peaking 1.0 kHz - 3.0 kHz",
-      description: "Incrementa la inteligibilidad en callouts de equipo y sonidos de recargas",
+      sublabel: "Resalte de detalles tácticos",
+      tooltip: "Resalta detalles acústicos como recargas, placas de blindaje y puertas.",
+      description: "Incrementa la nitidez en sonidos de placas de blindaje, puertas y avisos del equipo.",
       min: 0,
       max: 10,
       step: 1,
@@ -128,8 +138,9 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
     {
       key: "maestro",
       label: "Control Maestro (Preamp)",
-      sublabel: "Margen de Ganancia General",
-      description: "Ajuste fino de volumen master que se complementa con la protección anti-clipping",
+      sublabel: "Ajuste fino de volumen",
+      tooltip: "Volumen general calibrado con protección anti-clipping contra distorsión.",
+      description: "Ajuste fino del volumen final protegido con anti-clipping automático.",
       min: -12,
       max: 0,
       step: 0.5,
@@ -148,17 +159,18 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
   };
 
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
       {slidersConfig.map((item) => {
         const val = values[item.key];
         const isMaster = item.key === "maestro";
         const isCompression = item.key === "compresion";
         const isOwnAtt = item.key === "atenuacionPropia";
+        const showTooltip = activeTooltip === item.key;
 
         return (
           <div
             key={item.key}
-            className={`p-4 rounded-lg bg-tactical-850/80 border border-tactical-700/80 transition-all duration-200 ${item.glow} ${
+            className={`p-3.5 rounded-xl bg-tactical-850/90 border border-tactical-700/80 transition-all duration-200 relative ${item.glow} ${
               isMaster ? "md:col-span-2 bg-tactical-800/90 border-tactical-600" : ""
             } ${isCompression ? "border-tactical-accent/40 bg-tactical-800/90" : ""} ${
               isOwnAtt ? "border-amber-400/30 bg-tactical-800/80" : ""
@@ -166,14 +178,26 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
           >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2.5">
-                <div className="p-1.5 rounded bg-tactical-800 border border-tactical-700">
+                <div className="p-1.5 rounded-lg bg-tactical-800 border border-tactical-700">
                   {item.icon}
                 </div>
                 <div>
-                  <h4 className="text-sm font-semibold tracking-wide text-slate-100 flex items-center gap-2">
-                    {item.label}
-                  </h4>
-                  <span className="text-[11px] font-mono text-slate-400">
+                  <div className="flex items-center space-x-1.5">
+                    <h4 className="text-xs font-bold tracking-wide text-slate-100">
+                      {item.label}
+                    </h4>
+                    {/* Tooltip trigger */}
+                    <button
+                      type="button"
+                      onMouseEnter={() => setActiveTooltip(item.key)}
+                      onMouseLeave={() => setActiveTooltip(null)}
+                      onClick={() => setActiveTooltip(showTooltip ? null : item.key)}
+                      className="text-slate-400 hover:text-tactical-accent transition-colors focus:outline-none"
+                    >
+                      <HelpCircle className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400">
                     {item.sublabel}
                   </span>
                 </div>
@@ -181,14 +205,14 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
 
               <div className="flex items-center space-x-2">
                 <span
-                  className={`font-mono text-sm px-2 py-0.5 rounded bg-tactical-900 border border-tactical-700 font-bold ${item.color}`}
+                  className={`font-mono text-xs px-2 py-0.5 rounded bg-tactical-900 border border-tactical-700 font-bold ${item.color}`}
                 >
                   {val > 0 && isMaster ? `+${val}` : val}
                   {item.unit}
                 </span>
                 <button
                   onClick={() => handleReset(item.key)}
-                  title="Restablecer valor por defecto"
+                  title="Restablecer valor óptimo"
                   className="p-1 text-slate-500 hover:text-slate-200 rounded hover:bg-tactical-700/50 transition-colors"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
@@ -196,9 +220,16 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
               </div>
             </div>
 
-            <p className="text-[12px] text-slate-400 mb-3 leading-snug">
-              {item.description}
-            </p>
+            {/* Quick 1-line friendly tooltip banner */}
+            {showTooltip ? (
+              <div className="p-2 mb-2 rounded bg-tactical-900 border border-tactical-accent/40 text-[11px] text-tactical-accent font-mono leading-snug animate-in fade-in duration-100">
+                💡 {item.tooltip}
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-400 mb-2.5 leading-snug">
+                {item.description}
+              </p>
+            )}
 
             <div className="relative flex items-center">
               <input
