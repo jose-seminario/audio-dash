@@ -1,6 +1,14 @@
 import React from "react";
 import { SliderValues } from "../types/audio";
-import { Footprints, Bomb, Crosshair, Volume2, Sparkles, RotateCcw } from "lucide-react";
+import {
+  Footprints,
+  Bomb,
+  Crosshair,
+  Volume2,
+  Sparkles,
+  RotateCcw,
+  Activity,
+} from "lucide-react";
 
 interface AudioSlidersProps {
   values: SliderValues;
@@ -10,6 +18,7 @@ interface AudioSlidersProps {
 }
 
 const COMPETITIVE_DEFAULTS: Record<keyof SliderValues, number> = {
+  compresion: 65,
   pasos: 7.5,
   bombas: 6.0,
   disparos: 5.0,
@@ -37,23 +46,36 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
     glow: string;
   }[] = [
     {
+      key: "compresion",
+      label: "Compresión Táctica (Loudness VST)",
+      sublabel: "Umbral Dinámico & Limitador -1.0 dB",
+      description: "Eleva pasos distantes y fija un techo estricto para que los disparos no te ensordezcan",
+      min: 0,
+      max: 100,
+      step: 5,
+      unit: "%",
+      icon: <Activity className="w-5 h-5 text-tactical-accent" />,
+      color: "text-tactical-accent",
+      glow: "hover:border-tactical-accent/50",
+    },
+    {
       key: "pasos",
       label: "Pasos Enemigos",
       sublabel: "Realce 2.5 kHz & 4.0 kHz",
-      description: "Aumenta la presencia de pasos y crujidos en superficies duras",
+      description: "Aumenta la presencia de pisadas y crujidos en superficies duras",
       min: 0,
       max: 10,
       step: 1,
       unit: "/10",
-      icon: <Footprints className="w-5 h-5 text-tactical-accent" />,
-      color: "text-tactical-accent",
-      glow: "hover:border-tactical-accent/50",
+      icon: <Footprints className="w-5 h-5 text-tactical-green" />,
+      color: "text-tactical-green",
+      glow: "hover:border-tactical-green/50",
     },
     {
       key: "bombas",
       label: "Amortiguador de Bombas",
       sublabel: "Corte Graves HP 120 Hz & LS 200 Hz",
-      description: "Corta subgraves y retumbes para que las explosiones no silencien los pasos",
+      description: "Corta subgraves para que las explosiones y ataques no enmascaren los pasos",
       min: 0,
       max: 10,
       step: 1,
@@ -66,7 +88,7 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
       key: "disparos",
       label: "Atenuador de Disparos",
       sublabel: "Filtro High-Shelf 6.0 kHz (-3 dB)",
-      description: "Suaviza el chasquido agudo de armas automáticas reduciendo fatiga auditiva",
+      description: "Suaviza el chasquido estridente de armas automáticas reduciendo fatiga auditiva",
       min: 0,
       max: 10,
       step: 1,
@@ -79,20 +101,20 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
       key: "claridad",
       label: "Claridad & Voces",
       sublabel: "Peaking 1.0 kHz - 3.0 kHz",
-      description: "Incrementa la inteligibilidad en callouts de equipo y recargas",
+      description: "Incrementa la inteligibilidad en callouts de equipo y sonidos de recargas",
       min: 0,
       max: 10,
       step: 1,
       unit: "/10",
-      icon: <Sparkles className="w-5 h-5 text-tactical-green" />,
-      color: "text-tactical-green",
-      glow: "hover:border-tactical-green/50",
+      icon: <Sparkles className="w-5 h-5 text-purple-400" />,
+      color: "text-purple-400",
+      glow: "hover:border-purple-400/50",
     },
     {
       key: "maestro",
       label: "Control Maestro (Preamp)",
       sublabel: "Compensación Anti-Clipping",
-      description: "Margen dinámico para evitar cualquier saturación digital en los picos",
+      description: "Margen de ganancia general para evitar saturación digital en picos",
       min: -12,
       max: 0,
       step: 0.5,
@@ -115,13 +137,16 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
       {slidersConfig.map((item) => {
         const val = values[item.key];
         const isMaster = item.key === "maestro";
+        const isCompression = item.key === "compresion";
 
         return (
           <div
             key={item.key}
             className={`p-4 rounded-lg bg-tactical-850/80 border border-tactical-700/80 transition-all duration-200 ${item.glow} ${
               isMaster ? "md:col-span-2 bg-tactical-800/90 border-tactical-600" : ""
-            } ${disabled ? "opacity-50 pointer-events-none" : ""}`}
+            } ${isCompression ? "border-tactical-accent/40 bg-tactical-800/90" : ""} ${
+              disabled ? "opacity-50 pointer-events-none" : ""
+            }`}
           >
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center space-x-2.5">
@@ -174,10 +199,11 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
               />
             </div>
 
-            {/* Level markers */}
             <div className="flex justify-between text-[10px] font-mono text-slate-500 mt-1 px-1">
               <span>{item.min}{item.unit}</span>
-              <span>{isMaster ? "-6 dB" : "5"}</span>
+              <span>
+                {isMaster ? "-6 dB" : isCompression ? "50%" : "5"}
+              </span>
               <span>{item.max}{item.unit}</span>
             </div>
           </div>

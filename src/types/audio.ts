@@ -1,13 +1,22 @@
 export interface SliderValues {
-  pasos: number;      // 0 - 10: Boost 2500Hz & 4000Hz (Footsteps)
-  bombas: number;     // 0 - 10: High-Pass 120Hz & Low-Shelf 200Hz -4dB (Explosion dampener)
-  disparos: number;   // 0 - 10: High-Shelf 6000Hz -3dB (Gunshot tamer)
-  claridad: number;   // 0 - 10: Peaking 1000Hz - 3000Hz (Vocal clarity)
-  maestro: number;    // -12 to 0 dB: Preamp Master Control (Anti-clipping headroom)
+  pasos: number;       // 0 - 10: Boost 2500Hz & 4000Hz (Footsteps)
+  bombas: number;      // 0 - 10: High-Pass 120Hz & Low-Shelf 200Hz (Explosions)
+  disparos: number;    // 0 - 10: High-Shelf 6000Hz (Gunshots tamer)
+  claridad: number;    // 0 - 10: Peaking 1500Hz (Voice clarity)
+  compresion: number;  // 0 - 100%: Dynamic Loudness VST Limiter
+  maestro: number;     // -12 to 0 dB: Preamp Master Control
 }
 
 export type ProfileType = 'JUEGOS' | 'NORMAL';
 export type ProfileMode = 'auto' | 'manual';
+
+export interface HeadphoneProfile {
+  id: string;
+  name: string;
+  brand: string;
+  type: 'Over-Ear' | 'IEM';
+  filters: string[];
+}
 
 export interface DependencyStatus {
   equalizer_apo_installed: boolean;

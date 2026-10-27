@@ -4,33 +4,94 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
+const LOUDMAX_DOWNLOAD_URL: &str =
+    "https://github.com/jose-seminario/audio-dash/releases/download/v1.0.1/LoudMax64.dll";
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SliderValues {
-    pub pasos: f32,    // 0 - 10
-    pub bombas: f32,   // 0 - 10
-    pub disparos: f32, // 0 - 10
-    pub claridad: f32, // 0 - 10
-    pub maestro: f32,  // -12 to 0 dB
+    pub pasos: f32,       // 0 - 10
+    pub bombas: f32,      // 0 - 10
+    pub disparos: f32,    // 0 - 10
+    pub claridad: f32,    // 0 - 10
+    pub compresion: f32,  // 0 - 100%
+    pub maestro: f32,     // -12 to 0 dB
 }
 
 pub fn get_user_config_path() -> PathBuf {
     get_appdata_dir().join("config.txt")
 }
 
-/// Generates Equalizer APO parametric filter syntax
-pub fn generate_apo_config(values: &SliderValues, profile: &str) -> String {
+pub fn get_plugins_dir() -> PathBuf {
+    let mut path = get_appdata_dir();
+    path.push("plugins");
+    if !path.exists() {
+        let _ = fs::create_dir_all(&path);
+    }
+    path
+}
+
+pub fn get_vst_plugin_path() -> PathBuf {
+    get_plugins_dir().join("LoudMax64.dll")
+}
+
+/// Generates parametric filter and VST syntax for Equalizer APO
+pub fn generate_apo_config(
+    values: &SliderValues,
+    profile: &str,
+    headphone_filters: &[String],
+) -> String {
     let mut config = String::new();
-    config.push_str("# Audio Dash - Auto-generated Equalizer APO Config\n");
+    config.push_str("# ========================================================\n");
+    config.push_str("# Audio Dash v1.1.0 - Tactical Windows 11 Audio Optimizer\n");
     config.push_str(&format!("# Active Profile: {}\n", profile));
+    config.push_str("# ========================================================\n\n");
 
     if profile.to_uppercase() == "NORMAL" {
-        // Flat / Normal profile for natural Discord calls & general desktop audio
         config.push_str("Preamp: 0.0 dB\n");
         config.push_str("# Neutral profile active - All competitive filters bypassed\n");
         return config;
     }
 
-    // Gaming Profile: Master Preamp to prevent digital clipping
+    // FASE 1: Calibración Hardware AutoEQ
+    if !headphone_filters.is_empty() {
+        config.push_str("# --- FASE 1: CALIBRACION HARDWARE AUTOEQ ---\n");
+        for filter in headphone_filters {
+            config.push_str(filter);
+            config.push('\n');
+        }
+        config.push('\n');
+    }
+
+    // FASE 2: Compresor Dinámico VST (LoudMax Lookahead Limiter)
+    let comp_ratio = (values.compresion / 100.0).clamp(0.0, 1.0);
+    if comp_ratio > 0.02 {
+        let thresh_db = -comp_ratio * 28.0; // 0.0 to -28.0 dB
+        let ceiling_db = -1.0;              // -1.0 dB anti-clipping margin
+        let vst_path = get_vst_plugin_path();
+
+        config.push_str("# --- FASE 2: COMPRESOR DINAMICO & LIMITADOR ---\n");
+        if vst_path.exists() {
+            config.push_str(&format!(
+                "VSTPlugin: Library \"{}\" {:.1} {:.1}\n",
+                vst_path.to_string_lossy(),
+                thresh_db,
+                ceiling_db
+            ));
+        } else {
+            let make_up_gain = comp_ratio * 4.5;
+            config.push_str(
+                "# LoudMax VST en proceso de descarga - Compensacion de ganancia nativa activa:\n",
+            );
+            config.push_str(&format!(
+                "Filter: ON PK Fc 2500 Hz Gain +{:.2} dB Q 0.70\n",
+                make_up_gain
+            ));
+        }
+        config.push('\n');
+    }
+
+    // FASE 3: Controles de Ingeniería Perceptual
+    config.push_str("# --- FASE 3: CURVA TACTICA PERCEPTUAL ---\n");
     let preamp_db = values.maestro.clamp(-12.0, 0.0);
     config.push_str(&format!("Preamp: {:.1} dB\n", preamp_db));
 
@@ -49,10 +110,10 @@ pub fn generate_apo_config(values: &SliderValues, profile: &str) -> String {
         ));
     }
 
-    // 2. Slider "Bombas" (0 - 10): Cut low rumble with High-Pass & Low-Shelf
+    // 2. Slider "Bombas" (0 - 10): Cut low rumble
     let bombas_ratio = (values.bombas / 10.0).clamp(0.0, 1.0);
     if bombas_ratio > 0.05 {
-        let hp_freq = 60.0 + (60.0 * bombas_ratio); // Scaled up to 120 Hz
+        let hp_freq = 60.0 + (60.0 * bombas_ratio);
         let ls_gain = -4.0 * bombas_ratio;
         config.push_str(&format!("Filter: ON HP Fc {:.0} Hz\n", hp_freq));
         config.push_str(&format!(
@@ -61,7 +122,7 @@ pub fn generate_apo_config(values: &SliderValues, profile: &str) -> String {
         ));
     }
 
-    // 3. Slider "Disparos" (0 - 10): High-Shelf at 6000 Hz to smooth gunshots
+    // 3. Slider "Disparos" (0 - 10): High-Shelf at 6000 Hz
     let disparos_ratio = (values.disparos / 10.0).clamp(0.0, 1.0);
     if disparos_ratio > 0.05 {
         let hs_gain = -3.0 * disparos_ratio;
@@ -71,7 +132,7 @@ pub fn generate_apo_config(values: &SliderValues, profile: &str) -> String {
         ));
     }
 
-    // 4. Slider "Claridad" (0 - 10): Vocal & presence peak at 1500 Hz
+    // 4. Slider "Claridad" (0 - 10): Peaking at 1500 Hz
     let claridad_ratio = (values.claridad / 10.0).clamp(0.0, 1.0);
     if claridad_ratio > 0.05 {
         let peak_gain = 2.0 * claridad_ratio;
@@ -84,15 +145,18 @@ pub fn generate_apo_config(values: &SliderValues, profile: &str) -> String {
     config
 }
 
-/// Atomically writes the configuration file in %APPDATA%\AudioDash\config.txt
+/// Atomically writes config in %APPDATA%\AudioDash\config.txt
 #[tauri::command]
-pub fn update_eq_profile(slider_values: SliderValues, profile: String) -> Result<(), String> {
+pub fn update_eq_profile(
+    slider_values: SliderValues,
+    profile: String,
+    headphone_filters: Vec<String>,
+) -> Result<(), String> {
     let config_path = get_user_config_path();
     let tmp_path = config_path.with_extension("tmp");
 
-    let content = generate_apo_config(&slider_values, &profile);
+    let content = generate_apo_config(&slider_values, &profile, &headphone_filters);
 
-    // Atomic write to tmp file then rename
     {
         let mut tmp_file = OpenOptions::new()
             .create(true)
@@ -113,13 +177,70 @@ pub fn update_eq_profile(slider_values: SliderValues, profile: String) -> Result
     Ok(())
 }
 
+/// Zero-Config: Ensures LoudMax64.dll is downloaded locally into %APPDATA%\AudioDash\plugins\
+#[tauri::command]
+pub async fn ensure_vst_plugin_installed() -> Result<bool, String> {
+    tokio::task::spawn_blocking(|| {
+        let plugin_path = get_vst_plugin_path();
+        if plugin_path.exists() {
+            return Ok(true);
+        }
+
+        let _ = get_plugins_dir();
+
+        #[cfg(windows)]
+        {
+            use std::process::Command;
+            // 1. Try Windows native curl
+            let curl_res = Command::new("curl.exe")
+                .arg("-s")
+                .arg("-L")
+                .arg("-o")
+                .arg(&plugin_path)
+                .arg(LOUDMAX_DOWNLOAD_URL)
+                .output();
+
+            if let Ok(out) = curl_res {
+                if out.status.success() && plugin_path.exists() {
+                    return Ok(true);
+                }
+            }
+
+            // 2. Fallback to PowerShell Invoke-WebRequest
+            let script = format!(
+                "$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+                LOUDMAX_DOWNLOAD_URL,
+                plugin_path.to_string_lossy()
+            );
+
+            let ps_res = Command::new("powershell.exe")
+                .arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-WindowStyle")
+                .arg("Hidden")
+                .arg("-Command")
+                .arg(&script)
+                .output();
+
+            if let Ok(ps_out) = ps_res {
+                if ps_out.status.success() && plugin_path.exists() {
+                    return Ok(true);
+                }
+            }
+        }
+
+        Ok(plugin_path.exists())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// Forces instant hot-reload of the audio buffer
 #[tauri::command]
 pub async fn force_audio_refresh() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
         let path = get_user_config_path();
         if path.exists() {
-            // Touch timestamp by re-opening with write append
             if let Ok(file) = OpenOptions::new().write(true).open(&path) {
                 let _ = file.set_len(file.metadata().map(|m| m.len()).unwrap_or(0));
             }
@@ -127,8 +248,6 @@ pub async fn force_audio_refresh() -> Result<(), String> {
 
         #[cfg(windows)]
         {
-            // Trigger lightweight notification via Windows Multimedia COM API
-            // without killing apps or stopping audiosrv aggressively
             trigger_windows_audio_endpoint_notification();
         }
 
@@ -152,8 +271,6 @@ fn trigger_windows_audio_endpoint_notification() {
         if let Ok(enumerator) =
             CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
         {
-            // Querying the default audio endpoint forces Windows audio service
-            // to flush pending stream state and sync APO filters
             let _ = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia);
         }
         CoUninitialize();

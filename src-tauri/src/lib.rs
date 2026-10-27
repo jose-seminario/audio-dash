@@ -3,7 +3,7 @@ pub mod dependencies;
 pub mod system_audit;
 pub mod window_monitor;
 
-use audio_engine::{force_audio_refresh, update_eq_profile};
+use audio_engine::{ensure_vst_plugin_installed, force_audio_refresh, update_eq_profile};
 use dependencies::{check_system_dependencies, mark_first_run_completed};
 use system_audit::{audit_system, request_system_optimization};
 use window_monitor::spawn_window_monitor;
@@ -21,6 +21,7 @@ pub fn run() {
             check_system_dependencies,
             mark_first_run_completed,
             update_eq_profile,
+            ensure_vst_plugin_installed,
             force_audio_refresh,
             audit_system,
             request_system_optimization,

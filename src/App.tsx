@@ -9,6 +9,7 @@ import {
 import { AudioSliders } from "./components/AudioSliders";
 import { AuditModal } from "./components/AuditModal";
 import { WelcomeSetup } from "./components/WelcomeSetup";
+import { HEADPHONE_PROFILES } from "./data/headphones";
 import {
   ShieldAlert,
   Volume2,
@@ -17,6 +18,7 @@ import {
   Gamepad2,
   SlidersHorizontal,
   Info,
+  Headphones,
 } from "lucide-react";
 
 // Safe wrapper for Tauri invoke (falls back gracefully in browser dev mode)
@@ -31,7 +33,6 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
     }
   }
 
-  // Development/Mock fallback when running in a pure browser without Tauri backend
   console.log(`[Dev Mock] Invoking Tauri command: ${cmd}`, args);
   if (cmd === "check_system_dependencies") {
     return {
@@ -46,43 +47,10 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
     return {
       all_optimal: false,
       timestamp: new Date().toLocaleTimeString(),
-      checks: [
-        {
-          id: "audio_enhancements",
-          name: "Mejoras de Audio de Windows",
-          status: "warning",
-          current_value: "Habilitadas (Distorsión presente)",
-          recommended: "Deshabilitar para audio directo",
-          description: "Las mejoras de Windows agregan compresión y latencia en tiempo real.",
-        },
-        {
-          id: "spatial_sound",
-          name: "Sonido Espacial (Sonic/Dolby)",
-          status: "warning",
-          current_value: "Activo",
-          recommended: "Desactivar (Audio Estéreo Puro)",
-          description: "La virtualización espacial altera la respuesta de frecuencia en pasos lejanos.",
-        },
-        {
-          id: "audio_format",
-          name: "Formato de Muestreo de Audio",
-          status: "optimal",
-          current_value: "24 bits, 48000 Hz",
-          recommended: "16/24 bits, 48000 Hz",
-          description: "Frecuencia nativa para juegos y streaming.",
-        },
-        {
-          id: "power_plan",
-          name: "Plan de Energía de Windows",
-          status: "warning",
-          current_value: "Equilibrado",
-          recommended: "Alto Rendimiento / Máximo Desempeño",
-          description: "Evita que el kernel reduzca la frecuencia del chip de audio en reposo.",
-        },
-      ],
+      checks: [],
     } as unknown as T;
   }
-  if (cmd === "request_system_optimization") {
+  if (cmd === "ensure_vst_plugin_installed") {
     return true as unknown as T;
   }
   return true as unknown as T;
@@ -93,6 +61,7 @@ const DEFAULT_GAME_SLIDERS: SliderValues = {
   bombas: 6.0,
   disparos: 5.0,
   claridad: 4.0,
+  compresion: 65.0,
   maestro: -2.0,
 };
 
@@ -101,6 +70,7 @@ const DEFAULT_NORMAL_SLIDERS: SliderValues = {
   bombas: 0.0,
   disparos: 0.0,
   claridad: 0.0,
+  compresion: 0.0,
   maestro: 0.0,
 };
 
@@ -109,6 +79,8 @@ export const App: React.FC = () => {
   const [activeProfile, setActiveProfile] = useState<ProfileType>("JUEGOS");
   const [currentProcess, setCurrentProcess] = useState<string>("Buscando...");
   const [isGameActive, setIsGameActive] = useState<boolean>(true);
+
+  const [selectedHeadphoneId, setSelectedHeadphoneId] = useState<string>("hyperx_cloud_2");
 
   const [gameSliders, setGameSliders] = useState<SliderValues>(DEFAULT_GAME_SLIDERS);
   const [normalSliders, setNormalSliders] = useState<SliderValues>(DEFAULT_NORMAL_SLIDERS);
@@ -125,7 +97,7 @@ export const App: React.FC = () => {
 
   const activeSliders = activeProfile === "JUEGOS" ? gameSliders : normalSliders;
 
-  // Sync state to refs for decoupled, leak-free event listeners
+  // Refs for stable, non-re-registering event callbacks
   const profileModeRef = useRef(profileMode);
   profileModeRef.current = profileMode;
 
@@ -138,7 +110,15 @@ export const App: React.FC = () => {
   const activeProfileRef = useRef(activeProfile);
   activeProfileRef.current = activeProfile;
 
+  const selectedHeadphoneIdRef = useRef(selectedHeadphoneId);
+  selectedHeadphoneIdRef.current = selectedHeadphoneId;
+
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const getActiveHeadphoneFilters = useCallback((): string[] => {
+    const found = HEADPHONE_PROFILES.find((h) => h.id === selectedHeadphoneIdRef.current);
+    return found ? found.filters : [];
+  }, []);
 
   // Sync EQ configuration to backend file
   const syncEqProfile = useCallback(
@@ -147,12 +127,13 @@ export const App: React.FC = () => {
         await tauriInvoke("update_eq_profile", {
           sliderValues: values,
           profile: profile,
+          headphoneFilters: getActiveHeadphoneFilters(),
         });
       } catch (err) {
         console.error("Error sincronizando archivo de EQ:", err);
       }
     },
-    []
+    [getActiveHeadphoneFilters]
   );
 
   // Trigger audio refresh
@@ -203,6 +184,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     checkDependencies();
     runAudit();
+    // Silently check/download VST plugin on end-user machine
+    tauriInvoke("ensure_vst_plugin_installed").catch(() => {});
     syncEqProfile(activeSliders, activeProfile);
   }, []);
 
@@ -291,7 +274,6 @@ export const App: React.FC = () => {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
-    // Immediate atomic flush on release
     const currentValues =
       activeProfileRef.current === "JUEGOS"
         ? gameSlidersRef.current
@@ -309,6 +291,17 @@ export const App: React.FC = () => {
     activeProfileRef.current = target;
     const values = target === "JUEGOS" ? gameSlidersRef.current : normalSlidersRef.current;
     syncEqProfile(values, target);
+    triggerAudioRefresh();
+  };
+
+  const handleHeadphoneChange = (id: string) => {
+    setSelectedHeadphoneId(id);
+    selectedHeadphoneIdRef.current = id;
+    const values =
+      activeProfileRef.current === "JUEGOS"
+        ? gameSlidersRef.current
+        : normalSlidersRef.current;
+    syncEqProfile(values, activeProfileRef.current);
     triggerAudioRefresh();
   };
 
@@ -330,18 +323,17 @@ export const App: React.FC = () => {
                 AUDIO DASH
               </span>
               <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-tactical-accent/20 text-tactical-accent border border-tactical-accent/40">
-                v1.0 MVP
+                v1.1.0 OPEN SOURCE
               </span>
             </div>
             <p className="text-[10px] font-mono text-slate-400">
-              OPTIMIZADOR DE AUDIO COMPETITIVO • APO ENGINE
+              OPTIMIZADOR DE AUDIO TÁCTICO • LOUDMAX & AUTOEQ
             </p>
           </div>
         </div>
 
         {/* Tactical Controls & Actions */}
         <div className="flex items-center space-x-3">
-          {/* Refresh Audio Button */}
           <button
             onClick={triggerAudioRefresh}
             disabled={isRefreshing}
@@ -354,7 +346,6 @@ export const App: React.FC = () => {
             <span>Refrescar Audio</span>
           </button>
 
-          {/* System Audit Trigger */}
           <button
             onClick={() => setIsAuditOpen(true)}
             className="px-3 py-1.5 rounded-lg bg-tactical-800 hover:bg-tactical-700 border border-tactical-accent/40 text-xs font-mono text-tactical-accent flex items-center space-x-1.5 transition-all shadow-sm shadow-tactical-accent/10"
@@ -367,6 +358,37 @@ export const App: React.FC = () => {
 
       {/* Main Container */}
       <main className="flex-1 p-6 max-w-5xl w-full mx-auto space-y-5 overflow-y-auto">
+        {/* Headphone AutoEQ Calibration Selector */}
+        <section className="p-3.5 rounded-xl bg-tactical-850 border border-tactical-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+          <div className="flex items-center space-x-3">
+            <div className="p-2 rounded-lg bg-tactical-800 text-tactical-accent border border-tactical-700">
+              <Headphones className="w-5 h-5" />
+            </div>
+            <div>
+              <h4 className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wider">
+                Calibración Hardware AutoEQ
+              </h4>
+              <p className="text-[11px] text-slate-400">
+                Compensa la curva de fábrica de tus auriculares al estándar neutral Harman
+              </p>
+            </div>
+          </div>
+
+          <div className="w-full sm:w-auto">
+            <select
+              value={selectedHeadphoneId}
+              onChange={(e) => handleHeadphoneChange(e.target.value)}
+              className="w-full sm:w-72 px-3 py-1.5 rounded-lg bg-tactical-900 border border-tactical-600 text-xs font-mono text-slate-200 focus:outline-none focus:border-tactical-accent transition-colors"
+            >
+              {HEADPHONE_PROFILES.map((hp) => (
+                <option key={hp.id} value={hp.id}>
+                  {hp.brand} - {hp.name} ({hp.type})
+                </option>
+              ))}
+            </select>
+          </div>
+        </section>
+
         {/* Profile Switcher & Process Detection Header */}
         <section className="p-4 rounded-xl bg-tactical-850/80 border border-tactical-700 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
           <div className="space-y-1">
@@ -399,14 +421,13 @@ export const App: React.FC = () => {
                     : "bg-slate-700/50 text-slate-300 border border-slate-600"
                 }`}
               >
-                {activeProfile === "JUEGOS" ? "TACTICAL GAMING (EQ ACTIVO)" : "NORMAL (PLANO / CHAT)"}
+                {activeProfile === "JUEGOS" ? "TACTICAL GAMING (EQ + VST ACTIVO)" : "NORMAL (PLANO / CHAT)"}
               </span>
             </div>
           </div>
 
           {/* Profile Mode & Switcher Controls */}
           <div className="flex items-center space-x-3 w-full md:w-auto justify-end">
-            {/* Auto vs Manual Switch */}
             <div className="flex items-center p-1 rounded-lg bg-tactical-900 border border-tactical-700 text-xs font-mono">
               <button
                 onClick={() => setProfileMode("auto")}
@@ -430,7 +451,6 @@ export const App: React.FC = () => {
               </button>
             </div>
 
-            {/* Manual Toggle Buttons (Available when Manual mode is active) */}
             {profileMode === "manual" && (
               <div className="flex items-center space-x-1 p-1 rounded-lg bg-tactical-900 border border-tactical-700 text-xs font-mono">
                 <button
@@ -464,9 +484,7 @@ export const App: React.FC = () => {
             <div className="flex items-center space-x-2.5">
               <Info className="w-4 h-4 text-tactical-accent shrink-0" />
               <span>
-                <strong className="text-tactical-accent">Aviso de Dispositivo Global:</strong> Al
-                minimizar el juego o cambiar a Discord/escritorio, Equalizer APO ajustará el audio
-                general para proteger la claridad vocal.
+                <strong className="text-tactical-accent">Ventaja Táctica Activa:</strong> El ecualizador paramétrico y el compresor de rango dinámico nivelan los pasos automáticamente al detectar tu juego.
               </span>
             </div>
             {refreshNotice && (
@@ -477,12 +495,12 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* Perceptual Sliders Container */}
+        {/* Perceptual & Dynamic Sliders Container */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold font-mono tracking-wider text-slate-200 flex items-center gap-2">
               <SlidersHorizontal className="w-4 h-4 text-tactical-accent" />
-              CONTROLES DE INGENIERÍA PERCEPTUAL (0 - 10)
+              CONTROLES DE INGENIERÍA PERCEPTUAL & DINÁMICA
             </h3>
             <span className="text-[11px] font-mono text-slate-400">
               Escritura atómica en %APPDATA%\AudioDash\config.txt
@@ -536,7 +554,7 @@ export const App: React.FC = () => {
         onRequestOptimization={handleRequestOptimization}
       />
 
-      {/* Welcome Setup Modal (First-Run / Dependency missing) */}
+      {/* Welcome Setup Modal */}
       {showWelcome && dependencyStatus && (
         <WelcomeSetup
           status={dependencyStatus}
