@@ -5,6 +5,7 @@ import {
   ProfileMode,
   DependencyStatus,
   SystemAuditResult,
+  HrtfProfile,
 } from "./types/audio";
 import { AudioSliders } from "./components/AudioSliders";
 import { AuditModal } from "./components/AuditModal";
@@ -19,6 +20,8 @@ import {
   SlidersHorizontal,
   Info,
   Headphones,
+  Radio,
+  Sparkles,
 } from "lucide-react";
 
 // Safe wrapper for Tauri invoke (falls back gracefully in browser dev mode)
@@ -50,11 +53,55 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
       checks: [],
     } as unknown as T;
   }
-  if (cmd === "ensure_vst_plugin_installed") {
+  if (cmd === "ensure_vst_plugin_installed" || cmd === "ensure_hrir_installed") {
+    return true as unknown as T;
+  }
+  if (cmd === "get_clutch_state") {
+    return false as unknown as T;
+  }
+  if (cmd === "toggle_clutch_mode") {
     return true as unknown as T;
   }
   return true as unknown as T;
 }
+
+const HRTF_OPTIONS: HrtfProfile[] = [
+  {
+    id: "stereo_direct",
+    name: "Estéreo Directo (Sin HRTF / Bypass)",
+    brand: "Puro",
+    description: "Audio 1:1 original sin procesado convolutivo",
+    filename: "",
+  },
+  {
+    id: "sennheiser_gsx",
+    name: "Sennheiser GSX 1000 (7.1 Pinpoint FPS)",
+    brand: "EPOS",
+    description: "Máxima precisión en pasos traseros y ángulos de 45°",
+    filename: "sennheiser_gsx.wav",
+  },
+  {
+    id: "waves_nx",
+    name: "Waves Nx (Studio Virtualization)",
+    brand: "Waves",
+    description: "Separación tridimensional sin eco ni distorsión",
+    filename: "waves_nx.wav",
+  },
+  {
+    id: "dts_headphone_x",
+    name: "DTS Headphone:X v1 (Tactical Stage)",
+    brand: "DTS",
+    description: "Escenario sonoro expandido para detección temprana",
+    filename: "dts_headphone_x.wav",
+  },
+  {
+    id: "dolby_atmos_ref",
+    name: "Dolby Atmos Binaural Reference",
+    brand: "Dolby",
+    description: "Inmersión espacial con percepción clara de verticalidad",
+    filename: "dolby_atmos_ref.wav",
+  },
+];
 
 const DEFAULT_GAME_SLIDERS: SliderValues = {
   pasos: 7.5,
@@ -81,6 +128,8 @@ export const App: React.FC = () => {
   const [isGameActive, setIsGameActive] = useState<boolean>(true);
 
   const [selectedHeadphoneId, setSelectedHeadphoneId] = useState<string>("hyperx_cloud_2");
+  const [selectedHrtf, setSelectedHrtf] = useState<string>("sennheiser_gsx.wav");
+  const [isClutchActive, setIsClutchActive] = useState<boolean>(false);
 
   const [gameSliders, setGameSliders] = useState<SliderValues>(DEFAULT_GAME_SLIDERS);
   const [normalSliders, setNormalSliders] = useState<SliderValues>(DEFAULT_NORMAL_SLIDERS);
@@ -97,7 +146,7 @@ export const App: React.FC = () => {
 
   const activeSliders = activeProfile === "JUEGOS" ? gameSliders : normalSliders;
 
-  // Refs for stable, non-re-registering event callbacks
+  // Refs for stable event callbacks and listeners
   const profileModeRef = useRef(profileMode);
   profileModeRef.current = profileMode;
 
@@ -113,6 +162,12 @@ export const App: React.FC = () => {
   const selectedHeadphoneIdRef = useRef(selectedHeadphoneId);
   selectedHeadphoneIdRef.current = selectedHeadphoneId;
 
+  const selectedHrtfRef = useRef(selectedHrtf);
+  selectedHrtfRef.current = selectedHrtf;
+
+  const isClutchActiveRef = useRef(isClutchActive);
+  isClutchActiveRef.current = isClutchActive;
+
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const getActiveHeadphoneFilters = useCallback((): string[] => {
@@ -122,12 +177,22 @@ export const App: React.FC = () => {
 
   // Sync EQ configuration to backend file
   const syncEqProfile = useCallback(
-    async (values: SliderValues, profile: ProfileType) => {
+    async (
+      values: SliderValues,
+      profile: ProfileType,
+      hrtfFile?: string,
+      clutch?: boolean
+    ) => {
       try {
+        const hrtf = hrtfFile !== undefined ? hrtfFile : selectedHrtfRef.current;
+        const cl = clutch !== undefined ? clutch : isClutchActiveRef.current;
+
         await tauriInvoke("update_eq_profile", {
           sliderValues: values,
           profile: profile,
           headphoneFilters: getActiveHeadphoneFilters(),
+          hrtfFilename: hrtf || null,
+          isClutch: cl,
         });
       } catch (err) {
         console.error("Error sincronizando archivo de EQ:", err);
@@ -151,7 +216,6 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Check dependencies on startup
   const checkDependencies = useCallback(async () => {
     try {
       const res = await tauriInvoke<DependencyStatus>("check_system_dependencies");
@@ -164,7 +228,6 @@ export const App: React.FC = () => {
     }
   }, []);
 
-  // Run Windows 11 system audit
   const runAudit = useCallback(async () => {
     setIsAuditing(true);
     try {
@@ -181,17 +244,42 @@ export const App: React.FC = () => {
     return await tauriInvoke<boolean>("request_system_optimization");
   };
 
+  const handleToggleClutch = async () => {
+    try {
+      const newState = await tauriInvoke<boolean>("toggle_clutch_mode");
+      setIsClutchActive(newState);
+      isClutchActiveRef.current = newState;
+      const currentVals =
+        activeProfileRef.current === "JUEGOS"
+          ? gameSlidersRef.current
+          : normalSlidersRef.current;
+      syncEqProfile(
+        currentVals,
+        activeProfileRef.current,
+        selectedHrtfRef.current,
+        newState
+      );
+      triggerAudioRefresh();
+    } catch (e) {
+      console.error("Error toggling clutch mode:", e);
+    }
+  };
+
   useEffect(() => {
     checkDependencies();
     runAudit();
-    // Silently check/download VST plugin on end-user machine
+    // Silently verify/download VST and HRIR on the user's machine
     tauriInvoke("ensure_vst_plugin_installed").catch(() => {});
+    if (selectedHrtf) {
+      tauriInvoke("ensure_hrir_installed", { filename: selectedHrtf }).catch(() => {});
+    }
     syncEqProfile(activeSliders, activeProfile);
   }, []);
 
-  // Listen to background window detector events if in Tauri (registers strictly once)
+  // Listen to background window detector events and clutch toggle events
   useEffect(() => {
-    let unlisten: (() => void) | undefined;
+    let unlistenWindow: (() => void) | undefined;
+    let unlistenClutch: (() => void) | undefined;
     let isMounted = true;
 
     (async () => {
@@ -201,7 +289,9 @@ export const App: React.FC = () => {
       ) {
         try {
           const { listen } = await import("@tauri-apps/api/event");
-          const fn = await listen<{ process_name: string; is_game: boolean }>(
+
+          // Window detector listener
+          unlistenWindow = await listen<{ process_name: string; is_game: boolean }>(
             "window_changed",
             (event) => {
               if (!isMounted) return;
@@ -226,11 +316,24 @@ export const App: React.FC = () => {
             }
           );
 
-          if (isMounted) {
-            unlisten = fn;
-          } else {
-            fn();
-          }
+          // Clutch mode toggled via hotkey (Ctrl+Shift+C)
+          unlistenClutch = await listen<boolean>("clutch_mode_toggled", (event) => {
+            if (!isMounted) return;
+            const newState = event.payload;
+            setIsClutchActive(newState);
+            isClutchActiveRef.current = newState;
+            const currentVals =
+              activeProfileRef.current === "JUEGOS"
+                ? gameSlidersRef.current
+                : normalSlidersRef.current;
+            syncEqProfile(
+              currentVals,
+              activeProfileRef.current,
+              selectedHrtfRef.current,
+              newState
+            );
+            triggerAudioRefresh();
+          });
         } catch (e) {
           console.warn("No se pudo registrar listener de eventos Tauri:", e);
         }
@@ -239,14 +342,13 @@ export const App: React.FC = () => {
 
     return () => {
       isMounted = false;
-      if (unlisten) unlisten();
-      if (debounceTimerRef.current) {
-        clearTimeout(debounceTimerRef.current);
-      }
+      if (unlistenWindow) unlistenWindow();
+      if (unlistenClutch) unlistenClutch();
+      if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
   }, [syncEqProfile, triggerAudioRefresh]);
 
-  // Debounced slider handler to eliminate disk thrashing during drag
+  // Debounced slider handler
   const handleSliderChange = (key: keyof SliderValues, val: number) => {
     if (activeProfile === "JUEGOS") {
       const updated = { ...gameSliders, [key]: val };
@@ -305,6 +407,20 @@ export const App: React.FC = () => {
     triggerAudioRefresh();
   };
 
+  const handleHrtfChange = (filename: string) => {
+    setSelectedHrtf(filename);
+    selectedHrtfRef.current = filename;
+    if (filename) {
+      tauriInvoke("ensure_hrir_installed", { filename }).catch(() => {});
+    }
+    const values =
+      activeProfileRef.current === "JUEGOS"
+        ? gameSlidersRef.current
+        : normalSlidersRef.current;
+    syncEqProfile(values, activeProfileRef.current, filename);
+    triggerAudioRefresh();
+  };
+
   const openSourceForge = () => {
     window.open("https://sourceforge.net/projects/equalizerapo/", "_blank");
   };
@@ -323,17 +439,35 @@ export const App: React.FC = () => {
                 AUDIO DASH
               </span>
               <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-tactical-accent/20 text-tactical-accent border border-tactical-accent/40">
-                v1.1.0 OPEN SOURCE
+                v1.2.0 OPEN SOURCE
               </span>
             </div>
             <p className="text-[10px] font-mono text-slate-400">
-              OPTIMIZADOR DE AUDIO TÁCTICO • LOUDMAX & AUTOEQ
+              TACTICAL AUDIO OPTIMIZER • HRTF 7.1 • CLUTCH MODE • MMCSS
             </p>
           </div>
         </div>
 
         {/* Tactical Controls & Actions */}
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center space-x-2.5">
+          {/* Clutch Mode Trigger */}
+          <button
+            onClick={handleToggleClutch}
+            title="Modo Clutch: Atenúa Discord al 10% y aplica hiper-realce táctico de pasos (+8 dB). Atajo global: Ctrl+Shift+C"
+            className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-bold flex items-center space-x-1.5 transition-all ${
+              isClutchActive
+                ? "bg-tactical-alert text-white border-white animate-pulse shadow-md shadow-tactical-alert/40"
+                : "bg-tactical-800 hover:bg-tactical-700 border-tactical-alert/40 text-tactical-alert"
+            }`}
+          >
+            <Radio className="w-3.5 h-3.5" />
+            <span>{isClutchActive ? "CLUTCH ACTIVO [ON]" : "MODO CLUTCH"}</span>
+            <span className="hidden lg:inline text-[9px] px-1 py-0.2 rounded bg-black/40 border border-current font-normal">
+              Ctrl+Shift+C
+            </span>
+          </button>
+
+          {/* Refresh Audio Button */}
           <button
             onClick={triggerAudioRefresh}
             disabled={isRefreshing}
@@ -343,51 +477,82 @@ export const App: React.FC = () => {
             <RefreshCw
               className={`w-3.5 h-3.5 text-tactical-accent ${isRefreshing ? "animate-spin" : ""}`}
             />
-            <span>Refrescar Audio</span>
+            <span>Refrescar</span>
           </button>
 
+          {/* System Audit Trigger */}
           <button
             onClick={() => setIsAuditOpen(true)}
             className="px-3 py-1.5 rounded-lg bg-tactical-800 hover:bg-tactical-700 border border-tactical-accent/40 text-xs font-mono text-tactical-accent flex items-center space-x-1.5 transition-all shadow-sm shadow-tactical-accent/10"
           >
             <ShieldAlert className="w-3.5 h-3.5" />
-            <span>Auditoría Win11</span>
+            <span>Auditoría & MMCSS</span>
           </button>
         </div>
       </header>
 
       {/* Main Container */}
-      <main className="flex-1 p-6 max-w-5xl w-full mx-auto space-y-5 overflow-y-auto">
-        {/* Headphone AutoEQ Calibration Selector */}
-        <section className="p-3.5 rounded-xl bg-tactical-850 border border-tactical-700 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center space-x-3">
-            <div className="p-2 rounded-lg bg-tactical-800 text-tactical-accent border border-tactical-700">
-              <Headphones className="w-5 h-5" />
+      <main className="flex-1 p-6 max-w-5xl w-full mx-auto space-y-4 overflow-y-auto">
+        {/* Hardware & Spatial Engine Selectors */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Headphone AutoEQ Calibration Selector */}
+          <section className="p-3 rounded-xl bg-tactical-850 border border-tactical-700 flex items-center justify-between gap-3">
+            <div className="flex items-center space-x-2.5 min-w-0">
+              <div className="p-1.5 rounded-lg bg-tactical-800 text-tactical-accent border border-tactical-700 shrink-0">
+                <Headphones className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wider truncate">
+                  Calibración AutoEQ
+                </h4>
+                <p className="text-[10px] text-slate-400 truncate">
+                  Neutraliza la curva de fábrica
+                </p>
+              </div>
             </div>
-            <div>
-              <h4 className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wider">
-                Calibración Hardware AutoEQ
-              </h4>
-              <p className="text-[11px] text-slate-400">
-                Compensa la curva de fábrica de tus auriculares al estándar neutral Harman
-              </p>
-            </div>
-          </div>
 
-          <div className="w-full sm:w-auto">
             <select
               value={selectedHeadphoneId}
               onChange={(e) => handleHeadphoneChange(e.target.value)}
-              className="w-full sm:w-72 px-3 py-1.5 rounded-lg bg-tactical-900 border border-tactical-600 text-xs font-mono text-slate-200 focus:outline-none focus:border-tactical-accent transition-colors"
+              className="w-48 sm:w-56 px-2.5 py-1.5 rounded-lg bg-tactical-900 border border-tactical-600 text-xs font-mono text-slate-200 focus:outline-none focus:border-tactical-accent transition-colors shrink-0"
             >
               {HEADPHONE_PROFILES.map((hp) => (
                 <option key={hp.id} value={hp.id}>
-                  {hp.brand} - {hp.name} ({hp.type})
+                  {hp.brand} - {hp.name}
                 </option>
               ))}
             </select>
-          </div>
-        </section>
+          </section>
+
+          {/* HeSuVi HRTF Positional Spatial Engine Selector */}
+          <section className="p-3 rounded-xl bg-tactical-850 border border-tactical-700 flex items-center justify-between gap-3">
+            <div className="flex items-center space-x-2.5 min-w-0">
+              <div className="p-1.5 rounded-lg bg-tactical-800 text-tactical-green border border-tactical-700 shrink-0">
+                <Sparkles className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <h4 className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wider truncate">
+                  Motor HRTF (HeSuVi 7.1)
+                </h4>
+                <p className="text-[10px] text-slate-400 truncate">
+                  Convolución binaural posicional
+                </p>
+              </div>
+            </div>
+
+            <select
+              value={selectedHrtf}
+              onChange={(e) => handleHrtfChange(e.target.value)}
+              className="w-48 sm:w-56 px-2.5 py-1.5 rounded-lg bg-tactical-900 border border-tactical-600 text-xs font-mono text-slate-200 focus:outline-none focus:border-tactical-green transition-colors shrink-0"
+            >
+              {HRTF_OPTIONS.map((hrtf) => (
+                <option key={hrtf.id} value={hrtf.filename}>
+                  {hrtf.name}
+                </option>
+              ))}
+            </select>
+          </section>
+        </div>
 
         {/* Profile Switcher & Process Detection Header */}
         <section className="p-4 rounded-xl bg-tactical-850/80 border border-tactical-700 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
@@ -416,12 +581,18 @@ export const App: React.FC = () => {
               <span className="text-slate-400">Perfil en uso:</span>
               <span
                 className={`font-mono font-bold px-2 py-0.5 rounded text-[11px] ${
-                  activeProfile === "JUEGOS"
+                  isClutchActive
+                    ? "bg-tactical-alert/20 text-tactical-alert border border-tactical-alert/40 animate-pulse"
+                    : activeProfile === "JUEGOS"
                     ? "bg-tactical-green/15 text-tactical-green border border-tactical-green/30"
                     : "bg-slate-700/50 text-slate-300 border border-slate-600"
                 }`}
               >
-                {activeProfile === "JUEGOS" ? "TACTICAL GAMING (EQ + VST ACTIVO)" : "NORMAL (PLANO / CHAT)"}
+                {isClutchActive
+                  ? "CLUTCH MODE (DISCORD AL 10% + HIPER-REALCE PASOS)"
+                  : activeProfile === "JUEGOS"
+                  ? "TACTICAL GAMING (EQ + VST + HRTF)"
+                  : "NORMAL (PLANO / CHAT)"}
               </span>
             </div>
           </div>
@@ -478,13 +649,13 @@ export const App: React.FC = () => {
           </div>
         </section>
 
-        {/* Global EQ Notice Banner */}
+        {/* Global Notice Banner */}
         {profileMode === "auto" && (
           <div className="px-4 py-2.5 rounded-lg bg-tactical-800/80 border border-tactical-accent/20 flex items-center justify-between text-xs text-slate-300">
             <div className="flex items-center space-x-2.5">
               <Info className="w-4 h-4 text-tactical-accent shrink-0" />
               <span>
-                <strong className="text-tactical-accent">Ventaja Táctica Activa:</strong> El ecualizador paramétrico y el compresor de rango dinámico nivelan los pasos automáticamente al detectar tu juego.
+                <strong className="text-tactical-accent">Ventaja Táctica Activa:</strong> AutoEQ, compresor LoudMax VST y convolución espacial 7.1 procesando a nivel de Windows sin latencia.
               </span>
             </div>
             {refreshNotice && (
@@ -495,7 +666,7 @@ export const App: React.FC = () => {
           </div>
         )}
 
-        {/* Perceptual & Dynamic Sliders Container */}
+        {/* Perceptual & Dynamic Sliders */}
         <section className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-bold font-mono tracking-wider text-slate-200 flex items-center gap-2">
@@ -526,7 +697,12 @@ export const App: React.FC = () => {
           <span>•</span>
           <div className="flex items-center space-x-1">
             <Cpu className="w-3 h-3 text-slate-400" />
-            <span>SONDEO WIN32 NATIVO: 500ms</span>
+            <span>MMCSS: AUDITADO</span>
+          </div>
+          <span>•</span>
+          <div className="flex items-center space-x-1">
+            <Radio className="w-3 h-3 text-slate-400" />
+            <span>HOTKEY: CTRL+SHIFT+C</span>
           </div>
         </div>
 

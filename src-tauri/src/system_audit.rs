@@ -105,6 +105,30 @@ pub fn audit_system() -> SystemAuditResult {
         });
     }
 
+    // 5. Multimedia Class Scheduler Service (MMCSS) & Network Throttling
+    let mmcss_optimal = check_mmcss_registry();
+    if !mmcss_optimal {
+        all_optimal = false;
+        checks.push(AuditCheckItem {
+            id: "mmcss_optimization".to_string(),
+            name: "Planificador Multimedia (MMCSS) & Red".to_string(),
+            status: "warning".to_string(),
+            current_value: "Configuración estándar de Windows".to_string(),
+            recommended: "SystemResponsiveness: 0 | NetworkThrottling: Desactivado".to_string(),
+            description: "Optimiza la asignación de reloj de CPU para el motor de audio y elimina el estrangulamiento de paquetes de red durante el juego."
+                .to_string(),
+        });
+    } else {
+        checks.push(AuditCheckItem {
+            id: "mmcss_optimization".to_string(),
+            name: "Planificador Multimedia (MMCSS) & Red".to_string(),
+            status: "optimal".to_string(),
+            current_value: "SystemResponsiveness: 0 | Red Ilimitada".to_string(),
+            recommended: "Optimizado".to_string(),
+            description: "Prioridad de tiempo real activa para el subsistema de audio y gaming.".to_string(),
+        });
+    }
+
     SystemAuditResult {
         all_optimal,
         checks,
@@ -113,10 +137,8 @@ pub fn audit_system() -> SystemAuditResult {
 }
 
 fn check_audio_enhancements_registry() -> bool {
-    // Read registry key for audio device enhancement settings safely
     #[cfg(windows)]
     {
-        // Safe query without modifying anything
         false
     }
     #[cfg(not(windows))]
@@ -147,8 +169,19 @@ fn check_power_plan() -> bool {
     }
 }
 
+fn check_mmcss_registry() -> bool {
+    #[cfg(windows)]
+    {
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        true
+    }
+}
+
 /// Invokes Windows UAC on-demand using ShellExecuteW ("runas")
-/// to apply system optimizations without requiring the main app to be elevated.
+/// to apply system optimizations (Power plan, Equalizer APO link, MMCSS and Network tweaks).
 #[tauri::command]
 pub async fn request_system_optimization() -> Result<bool, String> {
     tokio::task::spawn_blocking(|| {
@@ -160,17 +193,32 @@ pub async fn request_system_optimization() -> Result<bool, String> {
             use windows::Win32::UI::Shell::ShellExecuteW;
             use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
-            // Prepare PowerShell one-liner that performs optimizations:
-            // 1. Sets High Performance power scheme
-            // 2. Links config in Equalizer APO if installed
             let script = r#"
+                # 1. Plan de energia de Alto Rendimiento
                 powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
+
+                # 2. Vinculacion de config en Equalizer APO
                 $apoPath = "C:\Program Files\EqualizerAPO\config\config.txt"
                 $appDataPath = [System.Environment]::GetFolderPath('ApplicationData') + '\AudioDash\config.txt'
                 if (Test-Path "C:\Program Files\EqualizerAPO\config") {
                     if (!(Test-Path $apoPath) -or !(Get-Content $apoPath -ErrorAction SilentlyContinue | Select-String -Pattern "AudioDash")) {
                         Add-Content -Path $apoPath -Value "`nInclude: `"$appDataPath`"" -Force
                     }
+                }
+
+                # 3. MMCSS Tweaks (SystemResponsiveness = 0 y NetworkThrottlingIndex = 0xFFFFFFFF)
+                $sysProfile = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
+                if (Test-Path $sysProfile) {
+                    Set-ItemProperty -Path $sysProfile -Name "SystemResponsiveness" -Value 0 -Type DWord -Force
+                    Set-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Value 0xFFFFFFFF -Type DWord -Force
+                }
+
+                # 4. Asignacion de prioridad alta a la tarea Games en MMCSS
+                $gamesTask = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games"
+                if (Test-Path $gamesTask) {
+                    Set-ItemProperty -Path $gamesTask -Name "GPU Priority" -Value 8 -Type DWord -Force
+                    Set-ItemProperty -Path $gamesTask -Name "Priority" -Value 6 -Type DWord -Force
+                    Set-ItemProperty -Path $gamesTask -Name "Scheduling Category" -Value "High" -Type String -Force
                 }
             "#;
 

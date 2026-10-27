@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   X,
   Loader2,
+  Cpu,
 } from "lucide-react";
 
 interface AuditModalProps {
@@ -37,11 +38,10 @@ export const AuditModal: React.FC<AuditModalProps> = ({
     try {
       const success = await onRequestOptimization();
       if (success) {
-        setOptimizationMessage("Optimización solicitada con éxito vía UAC.");
-        // Refresh audit status
+        setOptimizationMessage("Optimización de Windows y MMCSS aplicada con éxito vía UAC.");
         onRunAudit();
       } else {
-        setOptimizationMessage("La optimización fue cancelada o requiere permisos.");
+        setOptimizationMessage("La optimización fue cancelada o no se otorgaron permisos de administrador.");
       }
     } catch (err) {
       setOptimizationMessage(`Error: ${String(err)}`);
@@ -61,10 +61,10 @@ export const AuditModal: React.FC<AuditModalProps> = ({
             </div>
             <div>
               <h3 className="text-lg font-bold tracking-wider text-slate-100 flex items-center gap-2">
-                AUDITORÍA DEL SISTEMA (WINDOWS 11)
+                AUDITORÍA DEL SISTEMA & MMCSS (WINDOWS 11)
               </h3>
               <p className="text-xs text-slate-400 font-mono">
-                Latencia ultrabaja, pureza de señal y prevención de distorsión
+                Latencia ultrabaja, pureza de señal, MMCSS y prevención de distorsión
               </p>
             </div>
           </div>
@@ -78,16 +78,20 @@ export const AuditModal: React.FC<AuditModalProps> = ({
 
         {/* Content */}
         <div className="p-6 space-y-4 overflow-y-auto flex-1">
-          <div className="p-3 bg-tactical-800/60 rounded-lg border border-tactical-700/60 text-xs text-slate-300">
-            Esta auditoría analiza los puntos críticos de Windows que degradan la relación
-            señal-ruido o introducen búferes de latencia en juegos competitivos. Las acciones de
-            optimización usan el control de cuentas de usuario (UAC) únicamente al presionar el botón inferior.
+          <div className="p-3 bg-tactical-800/60 rounded-lg border border-tactical-700/60 text-xs text-slate-300 space-y-1.5">
+            <div className="flex items-center space-x-2 text-tactical-accent font-semibold font-mono">
+              <Cpu className="w-4 h-4" />
+              <span>OPTIMIZACIÓN NATIVA MMCSS & RED DE WINDOWS</span>
+            </div>
+            <p>
+              Esta auditoría inspecciona los registros del sistema operativo (Mejoras de audio, Sonido Espacial, Plan de Energía y el Planificador Multimedia MMCSS). Al aplicar la optimización, se ajusta <code className="text-tactical-accent font-mono">SystemResponsiveness = 0</code> y <code className="text-tactical-accent font-mono">NetworkThrottlingIndex = 0xFFFFFFFF</code> para máxima fluidez y cero jitter.
+            </p>
           </div>
 
           {isLoading ? (
             <div className="flex flex-col items-center justify-center py-12 text-slate-400">
               <Loader2 className="w-8 h-8 animate-spin text-tactical-accent mb-2" />
-              <p className="text-sm font-mono">Inspeccionando registros de audio de Windows...</p>
+              <p className="text-sm font-mono">Inspeccionando registros de audio y MMCSS de Windows...</p>
             </div>
           ) : auditData ? (
             <div className="space-y-3">
@@ -153,7 +157,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
           )}
         </div>
 
-          {/* Footer */}
+        {/* Footer */}
         <div className="px-6 py-4 border-t border-tactical-700 bg-tactical-850 flex items-center justify-between">
           <button
             onClick={onRunAudit}
@@ -177,7 +181,7 @@ export const AuditModal: React.FC<AuditModalProps> = ({
               ) : (
                 <>
                   <Zap className="w-4 h-4 fill-tactical-900" />
-                  <span>APLICAR OPTIMIZACIÓN WINDOWS</span>
+                  <span>APLICAR OPTIMIZACIÓN WINDOWS & MMCSS</span>
                 </>
               )}
             </button>

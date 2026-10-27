@@ -1,6 +1,6 @@
 [package]
 name = "audio-dash"
-version = "1.1.0"
+version = "1.2.0"
 description = "Audio Dash - Tactical Windows 11 Audio Optimizer"
 authors = ["AudioDash Team"]
 edition = "2021"
@@ -15,12 +15,14 @@ tauri-build = { version = "2.0", features = [] }
 [dependencies]
 tauri = { version = "2.0", features = [] }
 tauri-plugin-shell = "2.0"
+tauri-plugin-global-shortcut = "2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.38", features = ["rt-multi-thread", "time"] }
 dirs = "5.0"
 
 [target.'cfg(windows)'.dependencies]
+winmix = "0.1"
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",

@@ -18,6 +18,14 @@ export interface HeadphoneProfile {
   filters: string[];
 }
 
+export interface HrtfProfile {
+  id: string;
+  name: string;
+  brand: string;
+  description: string;
+  filename: string;
+}
+
 export interface DependencyStatus {
   equalizer_apo_installed: boolean;
   config_linked: boolean;

@@ -34,15 +34,17 @@ pub fn get_vst_plugin_path() -> PathBuf {
     get_plugins_dir().join("LoudMax64.dll")
 }
 
-/// Generates parametric filter and VST syntax for Equalizer APO
+/// Generates parametric filter, VST syntax, and HRTF convolution for Equalizer APO
 pub fn generate_apo_config(
     values: &SliderValues,
     profile: &str,
     headphone_filters: &[String],
+    hrtf_filename: Option<&str>,
+    is_clutch: bool,
 ) -> String {
     let mut config = String::new();
     config.push_str("# ========================================================\n");
-    config.push_str("# Audio Dash v1.1.0 - Tactical Windows 11 Audio Optimizer\n");
+    config.push_str("# Audio Dash v1.2.0 - Tactical Windows 11 Audio Optimizer\n");
     config.push_str(&format!("# Active Profile: {}\n", profile));
     config.push_str("# ========================================================\n\n");
 
@@ -142,6 +144,27 @@ pub fn generate_apo_config(
         ));
     }
 
+    // MODO CLUTCH HIPER-ENFOQUE (Si está activo)
+    if is_clutch {
+        config.push_str("\n# --- MODO CLUTCH HIPER-ENFOQUE ACTIVO (+8.0 dB EN 2.5 kHz) ---\n");
+        config.push_str("Filter: ON PK Fc 2500 Hz Gain +8.00 dB Q 1.50\n");
+        config.push_str("Filter: ON PK Fc 4000 Hz Gain +4.00 dB Q 1.20\n");
+    }
+
+    // FASE 4: Virtualización Espacial HRTF / HeSuVi (Convolución 7.1)
+    if let Some(filename) = hrtf_filename {
+        if !filename.is_empty() {
+            let hrir_path = crate::hrtf_engine::get_hrir_profile_path(filename);
+            if hrir_path.exists() {
+                config.push_str("\n# --- FASE 4: VIRTUALIZACION ESPACIAL HRTF (7.1 SURROUND) ---\n");
+                config.push_str(&format!(
+                    "Convolution: \"{}\"\n",
+                    hrir_path.to_string_lossy()
+                ));
+            }
+        }
+    }
+
     config
 }
 
@@ -151,11 +174,20 @@ pub fn update_eq_profile(
     slider_values: SliderValues,
     profile: String,
     headphone_filters: Vec<String>,
+    hrtf_filename: Option<String>,
+    is_clutch: Option<bool>,
 ) -> Result<(), String> {
     let config_path = get_user_config_path();
     let tmp_path = config_path.with_extension("tmp");
+    let clutch_active = is_clutch.unwrap_or_else(crate::clutch_mode::is_clutch_active);
 
-    let content = generate_apo_config(&slider_values, &profile, &headphone_filters);
+    let content = generate_apo_config(
+        &slider_values,
+        &profile,
+        &headphone_filters,
+        hrtf_filename.as_deref(),
+        clutch_active,
+    );
 
     {
         let mut tmp_file = OpenOptions::new()
