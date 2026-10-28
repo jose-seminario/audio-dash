@@ -1,5 +1,5 @@
 import React from "react";
-import { X, Gamepad2, Volume2, CheckCircle2, ShieldAlert, Sparkles, Sliders } from "lucide-react";
+import { X, Gamepad2, Sparkles } from "lucide-react";
 
 interface InGameGuideModalProps {
   isOpen: boolean;

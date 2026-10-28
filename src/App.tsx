@@ -13,7 +13,6 @@ import { WelcomeSetup } from "./components/WelcomeSetup";
 import { HeadphoneSearch } from "./components/HeadphoneSearch";
 import { InGameGuideModal } from "./components/InGameGuideModal";
 import {
-  ShieldAlert,
   Volume2,
   RefreshCw,
   Cpu,
@@ -30,7 +29,6 @@ import {
   RotateCcw,
   ExternalLink,
   Zap,
-  HelpCircle,
   AlertOctagon,
   Layers,
 } from "lucide-react";
@@ -192,7 +190,6 @@ export const App: React.FC = () => {
   const [auditData, setAuditData] = useState<SystemAuditResult | null>(null);
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
-  const [refreshNotice, setRefreshNotice] = useState<string | null>(null);
   const [isRestoring, setIsRestoring] = useState<boolean>(false);
   const [showPanicConfirm, setShowPanicConfirm] = useState<boolean>(false);
   const [tabFeedbackMessage, setTabFeedbackMessage] = useState<string | null>(null);
@@ -222,15 +219,6 @@ export const App: React.FC = () => {
   isClutchActiveRef.current = isClutchActive;
 
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const getActiveHeadphoneFilters = useCallback((): string[] => {
-    // Dynamic import safety fallback handled by static data
-    import("./data/headphones").then(({ HEADPHONE_PROFILES }) => {
-      const found = HEADPHONE_PROFILES.find((h) => h.id === selectedHeadphoneIdRef.current);
-      return found ? found.filters : [];
-    });
-    return [];
-  }, []);
 
   // Sync EQ configuration to backend file
   const syncEqProfile = useCallback(
@@ -268,11 +256,8 @@ export const App: React.FC = () => {
   // Trigger audio refresh
   const triggerAudioRefresh = useCallback(async () => {
     setIsRefreshing(true);
-    setRefreshNotice(null);
     try {
       await tauriInvoke("force_audio_refresh");
-      setRefreshNotice("Audio sincronizado");
-      setTimeout(() => setRefreshNotice(null), 2000);
     } catch (err) {
       console.error("Error al refrescar audio:", err);
     } finally {
@@ -517,18 +502,6 @@ export const App: React.FC = () => {
         ? gameSlidersRef.current
         : normalSlidersRef.current;
     syncEqProfile(currentValues, activeProfileRef.current);
-    triggerAudioRefresh();
-  };
-
-  const handleToggleProfile = (target: ProfileType) => {
-    if (debounceTimerRef.current) {
-      clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = null;
-    }
-    setActiveProfile(target);
-    activeProfileRef.current = target;
-    const values = target === "JUEGOS" ? gameSlidersRef.current : normalSlidersRef.current;
-    syncEqProfile(values, target);
     triggerAudioRefresh();
   };
 
