@@ -104,6 +104,8 @@ pub fn generate_apo_config(
     hrtf_filename: Option<&str>,
     is_clutch: bool,
     distance_aware: bool,
+    selected_device: Option<&str>,
+    test_mode: bool,
 ) -> String {
     let mut config = String::new();
     config.push_str("# ========================================================\n");
@@ -127,8 +129,17 @@ pub fn generate_apo_config(
         config.push('\n');
     }
 
-    // ENRUTAMIENTO CONDICIONAL: PROTECCIÓN ANTI-DISCORD (SOLO AFECTA AL JUEGO)
-    config.push_str("If: app:cod.exe\n\n");
+    // ENRUTAMIENTO POR DISPOSITIVO (AISLAMIENTO DE WARZONE) O MODO DE PRUEBA
+    if !test_mode {
+        if let Some(dev) = selected_device {
+            let dev_clean = dev.trim();
+            if !dev_clean.is_empty() {
+                config.push_str(&format!("Device: \"{}\"\n\n", dev_clean));
+            }
+        }
+    } else {
+        config.push_str("# --- MODO DE PRUEBA ACTIVO (FILTROS GLOBALES SIN FILTRADO DE DISPOSITIVO) ---\n\n");
+    }
 
     // 1. ATENUACIÓN DEL CANAL CENTRAL (Pre-Mix: amortigua disparos y recargas propias)
     if values.atenuacion_propia < -0.05 {
@@ -247,8 +258,7 @@ pub fn generate_apo_config(
         config.push_str("Filter: ON PK Fc 4000 Hz Gain +4.00 dB Q 1.20\n");
     }
 
-    // CIERRE DEL ENRUTAMIENTO CONDICIONAL
-    config.push_str("\nEndIf:\n\n");
+
 
     // FASE 4: Virtualización Espacial HRTF / HeSuVi (FUERA DEL IF - AFECTA A TODO EL SISTEMA)
     if let Some(filename) = hrtf_filename {
@@ -276,11 +286,14 @@ pub fn update_eq_profile(
     hrtf_filename: Option<String>,
     is_clutch: Option<bool>,
     distance_aware: Option<bool>,
+    selected_device: Option<String>,
+    test_mode: Option<bool>,
 ) -> Result<(), String> {
     let config_path = get_user_config_path();
     let tmp_path = config_path.with_extension("tmp");
     let clutch_active = is_clutch.unwrap_or_else(crate::clutch_mode::is_clutch_active);
     let distance_aware_active = distance_aware.unwrap_or(false);
+    let is_test_mode = test_mode.unwrap_or(false);
 
     let content = generate_apo_config(
         &slider_values,
@@ -289,6 +302,8 @@ pub fn update_eq_profile(
         hrtf_filename.as_deref(),
         clutch_active,
         distance_aware_active,
+        selected_device.as_deref(),
+        is_test_mode,
     );
 
     if let Some(parent) = config_path.parent() {

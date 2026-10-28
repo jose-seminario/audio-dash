@@ -1,4 +1,5 @@
 pub mod audio_engine;
+pub mod audio_router;
 pub mod backup_system;
 pub mod clutch_mode;
 pub mod com_guard;
@@ -14,8 +15,8 @@ use clutch_mode::{get_clutch_state, init_clutch_hotkey, toggle_clutch_mode};
 use dependencies::{check_system_dependencies, mark_first_run_completed};
 use hrtf_engine::{ensure_hrir_installed, get_available_hrtf_profiles};
 use system_audit::{apply_leq_tweak, audit_system, open_windows_sound_settings, request_system_optimization};
+use audio_router::{get_audio_devices, open_app_volume_settings, open_sound_control_panel, route_game_to_virtual_cable};
 use system_tweaks::apply_audiodg_affinity;
-use window_monitor::spawn_window_monitor;
 
 /// Crash logger panic hook: logs any panic with file and line to %APPDATA%\AudioDash\crash.log
 pub fn setup_panic_hook() {
@@ -83,10 +84,6 @@ pub fn run() {
             // Asegurar creación de directorios en %APPDATA%\AudioDash
             dependencies::ensure_app_directories();
 
-            // Spawn window monitor en hilo independiente (sin riesgo de panic)
-            let handle = app.handle().clone();
-            spawn_window_monitor(handle);
-
             // Inicializar atajo de Clutch Mode protegido contra panics
             init_clutch_hotkey(&app.handle());
 
@@ -108,6 +105,10 @@ pub fn run() {
             get_clutch_state,
             restore_defaults,
             open_windows_sound_settings,
+            get_audio_devices,
+            route_game_to_virtual_cable,
+            open_app_volume_settings,
+            open_sound_control_panel,
         ]);
 
     if let Err(err) = builder.run(tauri::generate_context!()) {

@@ -2,16 +2,17 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   SliderValues,
   ProfileType,
-  ProfileMode,
   DependencyStatus,
   SystemAuditResult,
   HrtfProfile,
+  AudioDevice,
 } from "./types/audio";
 import { AudioSliders } from "./components/AudioSliders";
 import { AuditModal } from "./components/AuditModal";
 import { WelcomeSetup } from "./components/WelcomeSetup";
 import { HeadphoneSearch } from "./components/HeadphoneSearch";
 import { InGameGuideModal } from "./components/InGameGuideModal";
+import { VirtualCableModal } from "./components/VirtualCableModal";
 import {
   Volume2,
   RefreshCw,
@@ -31,6 +32,8 @@ import {
   Zap,
   AlertOctagon,
   Layers,
+  Headphones,
+  FlaskConical,
 } from "lucide-react";
 
 // Safe wrapper for Tauri invoke (falls back gracefully in browser dev mode)
@@ -86,6 +89,28 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
     return false as unknown as T;
   }
   if (cmd === "toggle_clutch_mode") {
+    return true as unknown as T;
+  }
+  if (cmd === "get_audio_devices") {
+    return [
+      {
+        id: "{mock-cable-guid}",
+        name: "CABLE Input (VB-Audio Virtual Cable)",
+        endpoint_name: "CABLE Input",
+        is_virtual_cable: true,
+      },
+      {
+        id: "{mock-realtek-guid}",
+        name: "Altavoces (Realtek(R) Audio)",
+        endpoint_name: "Altavoces",
+        is_virtual_cable: false,
+      },
+    ] as unknown as T;
+  }
+  if (cmd === "route_game_to_virtual_cable") {
+    return "Call of Duty no está abierto. Sigue las instrucciones del asistente." as unknown as T;
+  }
+  if (cmd === "open_app_volume_settings" || cmd === "open_sound_control_panel") {
     return true as unknown as T;
   }
   return true as unknown as T;
@@ -156,10 +181,14 @@ export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("perfil");
 
   // Profiles and active mode state
-  const [profileMode, setProfileMode] = useState<ProfileMode>("auto");
   const [activeProfile, setActiveProfile] = useState<ProfileType>("JUEGOS");
-  const [currentProcess, setCurrentProcess] = useState<string>("Buscando...");
-  const [isGameActive, setIsGameActive] = useState<boolean>(false);
+
+  // Audio Devices & Routing (Warzone Isolation & Test Mode)
+  const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<string>("");
+  const [isTestMode, setIsTestMode] = useState<boolean>(false);
+  const [showCableModal, setShowCableModal] = useState<boolean>(false);
+  const [routingNotice, setRoutingNotice] = useState<string | null>(null);
 
   // Per-profile slider values
   const [gameSliders, setGameSliders] = useState<SliderValues>(DEFAULT_GAME_SLIDERS);
@@ -197,9 +226,6 @@ export const App: React.FC = () => {
   const activeSliders = activeProfile === "JUEGOS" ? gameSliders : normalSliders;
 
   // Refs for stable event callbacks and listeners
-  const profileModeRef = useRef(profileMode);
-  profileModeRef.current = profileMode;
-
   const gameSlidersRef = useRef(gameSliders);
   gameSlidersRef.current = gameSliders;
 
@@ -218,7 +244,15 @@ export const App: React.FC = () => {
   const isClutchActiveRef = useRef(isClutchActive);
   isClutchActiveRef.current = isClutchActive;
 
+  const selectedDeviceRef = useRef(selectedDevice);
+  selectedDeviceRef.current = selectedDevice;
+
+  const isTestModeRef = useRef(isTestMode);
+  isTestModeRef.current = isTestMode;
+
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const hasVirtualCable = audioDevices.some((d) => d.is_virtual_cable);
 
   // Sync EQ configuration to backend file
   const syncEqProfile = useCallback(
@@ -227,7 +261,9 @@ export const App: React.FC = () => {
       profile: ProfileType,
       hrtfFile?: string,
       clutch?: boolean,
-      distAware?: boolean
+      distAware?: boolean,
+      device?: string,
+      testMode?: boolean
     ) => {
       try {
         const { HEADPHONE_PROFILES } = await import("./data/headphones");
@@ -237,6 +273,8 @@ export const App: React.FC = () => {
         const hrtf = hrtfFile !== undefined ? hrtfFile : selectedHrtfRef.current;
         const cl = clutch !== undefined ? clutch : isClutchActiveRef.current;
         const dist = distAware !== undefined ? distAware : distanceAwareRef.current;
+        const targetDev = device !== undefined ? device : selectedDeviceRef.current;
+        const isTest = testMode !== undefined ? testMode : isTestModeRef.current;
 
         await tauriInvoke("update_eq_profile", {
           sliderValues: values,
@@ -245,6 +283,8 @@ export const App: React.FC = () => {
           hrtfFilename: hrtf || null,
           isClutch: cl,
           distanceAware: dist,
+          selectedDevice: targetDev || null,
+          testMode: isTest,
         });
       } catch (err) {
         console.error("Error sincronizando archivo de EQ:", err);
@@ -293,6 +333,93 @@ export const App: React.FC = () => {
     return await tauriInvoke<boolean>("request_system_optimization");
   };
 
+  const loadAudioDevices = useCallback(async () => {
+    try {
+      const devices = await tauriInvoke<AudioDevice[]>("get_audio_devices");
+      if (Array.isArray(devices) && devices.length > 0) {
+        setAudioDevices(devices);
+        const cable = devices.find((d) => d.is_virtual_cable);
+        if (cable) {
+          const defaultDev = cable.endpoint_name || cable.name;
+          setSelectedDevice((prev) => prev || defaultDev);
+          selectedDeviceRef.current = selectedDeviceRef.current || defaultDev;
+        } else if (devices.length > 0) {
+          const defaultDev = devices[0].endpoint_name || devices[0].name;
+          setSelectedDevice((prev) => prev || defaultDev);
+          selectedDeviceRef.current = selectedDeviceRef.current || defaultDev;
+        }
+      }
+    } catch (e) {
+      console.warn("Error cargando dispositivos de audio:", e);
+    }
+  }, []);
+
+  const handleDeviceChange = (dev: string) => {
+    setSelectedDevice(dev);
+    selectedDeviceRef.current = dev;
+    const values =
+      activeProfileRef.current === "JUEGOS"
+        ? gameSlidersRef.current
+        : normalSlidersRef.current;
+    syncEqProfile(
+      values,
+      activeProfileRef.current,
+      selectedHrtfRef.current,
+      isClutchActiveRef.current,
+      distanceAwareRef.current,
+      dev,
+      isTestModeRef.current
+    );
+    triggerAudioRefresh();
+  };
+
+  const handleToggleTestMode = () => {
+    const nextVal = !isTestMode;
+    setIsTestMode(nextVal);
+    isTestModeRef.current = nextVal;
+    const values =
+      activeProfileRef.current === "JUEGOS"
+        ? gameSlidersRef.current
+        : normalSlidersRef.current;
+    syncEqProfile(
+      values,
+      activeProfileRef.current,
+      selectedHrtfRef.current,
+      isClutchActiveRef.current,
+      distanceAwareRef.current,
+      selectedDeviceRef.current,
+      nextVal
+    );
+    triggerAudioRefresh();
+  };
+
+  const handleOpenAppVolume = async () => {
+    try {
+      await tauriInvoke("open_app_volume_settings");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleOpenSoundControl = async () => {
+    try {
+      await tauriInvoke("open_sound_control_panel");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const handleAutoRouteGame = async () => {
+    try {
+      await tauriInvoke("route_game_to_virtual_cable");
+      setRoutingNotice("Warzone asignado a CABLE Input exitosamente.");
+      setTimeout(() => setRoutingNotice(null), 6000);
+    } catch (e) {
+      setRoutingNotice(String(e));
+      setTimeout(() => setRoutingNotice(null), 6000);
+    }
+  };
+
   const handleToggleClutch = async () => {
     try {
       const newState = await tauriInvoke<boolean>("toggle_clutch_mode");
@@ -307,7 +434,9 @@ export const App: React.FC = () => {
         activeProfileRef.current,
         selectedHrtfRef.current,
         newState,
-        distanceAwareRef.current
+        distanceAwareRef.current,
+        selectedDeviceRef.current,
+        isTestModeRef.current
       );
       triggerAudioRefresh();
     } catch (e) {
@@ -323,7 +452,15 @@ export const App: React.FC = () => {
       activeProfileRef.current === "JUEGOS"
         ? gameSlidersRef.current
         : normalSlidersRef.current;
-    syncEqProfile(values, activeProfileRef.current, undefined, undefined, nextVal);
+    syncEqProfile(
+      values,
+      activeProfileRef.current,
+      undefined,
+      undefined,
+      nextVal,
+      selectedDeviceRef.current,
+      isTestModeRef.current
+    );
     triggerAudioRefresh();
   };
 
@@ -337,6 +474,8 @@ export const App: React.FC = () => {
         hrtfFilename: null,
         isClutch: false,
         distanceAware: false,
+        selectedDevice: null,
+        testMode: true,
       });
       await tauriInvoke("force_audio_refresh");
     } catch (err) {
@@ -357,7 +496,9 @@ export const App: React.FC = () => {
         activeProfileRef.current,
         selectedHrtfRef.current,
         isClutchActiveRef.current,
-        distanceAwareRef.current
+        distanceAwareRef.current,
+        selectedDeviceRef.current,
+        isTestModeRef.current
       );
       await tauriInvoke("force_audio_refresh");
     } catch (err) {
@@ -389,6 +530,7 @@ export const App: React.FC = () => {
   useEffect(() => {
     checkDependencies();
     runAudit();
+    loadAudioDevices();
     tauriInvoke("ensure_vst_plugin_installed").catch(() => {});
     if (selectedHrtf) {
       tauriInvoke("ensure_hrir_installed", { filename: selectedHrtf }).catch(() => {});
@@ -396,9 +538,8 @@ export const App: React.FC = () => {
     syncEqProfile(activeSliders, activeProfile);
   }, []);
 
-  // Listen to background window detector events and clutch toggle events
+  // Listen to background clutch toggle events (hotkey Ctrl+Shift+C)
   useEffect(() => {
-    let unlistenWindow: (() => void) | undefined;
     let unlistenClutch: (() => void) | undefined;
     let isMounted = true;
 
@@ -409,32 +550,6 @@ export const App: React.FC = () => {
       ) {
         try {
           const { listen } = await import("@tauri-apps/api/event");
-
-          // Window detector listener
-          unlistenWindow = await listen<{ process_name: string; is_game: boolean }>(
-            "window_changed",
-            (event) => {
-              if (!isMounted) return;
-              const { process_name, is_game } = event.payload;
-              setCurrentProcess(process_name);
-              setIsGameActive(is_game);
-
-              if (profileModeRef.current === "auto") {
-                const targetProfile: ProfileType = is_game ? "JUEGOS" : "NORMAL";
-                setActiveProfile((prev) => {
-                  if (prev !== targetProfile) {
-                    const values =
-                      targetProfile === "JUEGOS"
-                        ? gameSlidersRef.current
-                        : normalSlidersRef.current;
-                    syncEqProfile(values, targetProfile);
-                    triggerAudioRefresh();
-                  }
-                  return targetProfile;
-                });
-              }
-            }
-          );
 
           // Clutch mode toggled via hotkey (Ctrl+Shift+C)
           unlistenClutch = await listen<boolean>("clutch_mode_toggled", (event) => {
@@ -451,7 +566,9 @@ export const App: React.FC = () => {
               activeProfileRef.current,
               selectedHrtfRef.current,
               newState,
-              distanceAwareRef.current
+              distanceAwareRef.current,
+              selectedDeviceRef.current,
+              isTestModeRef.current
             );
             triggerAudioRefresh();
           });
@@ -463,7 +580,6 @@ export const App: React.FC = () => {
 
     return () => {
       isMounted = false;
-      if (unlistenWindow) unlistenWindow();
       if (unlistenClutch) unlistenClutch();
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
@@ -658,15 +774,29 @@ export const App: React.FC = () => {
           </button>
         </div>
 
-        {/* Friendly Status Badge */}
+        {/* Friendly Routing Status Badge */}
         <div className="hidden sm:flex items-center space-x-2 font-mono text-[11px]">
           <span
             className={`w-2 h-2 rounded-full ${
-              isGameActive ? "bg-tactical-green animate-pulse" : "bg-slate-500"
+              isTestMode
+                ? "bg-amber-400 animate-pulse"
+                : hasVirtualCable
+                ? "bg-tactical-green animate-pulse"
+                : "bg-tactical-accent"
             }`}
           ></span>
-          <span className={isGameActive ? "text-tactical-green font-bold" : "text-slate-400"}>
-            {isGameActive ? "Todo listo para jugar" : "Esperando inicio de juego..."}
+          <span
+            className={
+              isTestMode
+                ? "text-amber-400 font-bold"
+                : hasVirtualCable
+                ? "text-tactical-green font-bold"
+                : "text-slate-300"
+            }
+          >
+            {isTestMode
+              ? "Prueba Activa (Todo el Sistema)"
+              : `Filtros en: ${selectedDevice || "Salida Principal"}`}
           </span>
         </div>
       </nav>
@@ -676,51 +806,67 @@ export const App: React.FC = () => {
         {/* TAB 1: PERFIL DE JUEGO */}
         {activeTab === "perfil" && (
           <div className="space-y-4 animate-in fade-in-50 duration-150">
-            {/* Friendly Game Status Banner */}
+            {/* Friendly Game & Device Routing Status Banner */}
             <div className="p-4 rounded-xl bg-tactical-850 border border-tactical-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
               <div className="space-y-1">
                 <div className="flex items-center space-x-2">
                   <span className="text-xs font-mono uppercase text-slate-400">
-                    Ventana en Primer Plano:
+                    Aislamiento Táctico de Audio:
                   </span>
                   <span
                     className={`font-mono text-xs font-bold px-2 py-0.5 rounded bg-tactical-900 border ${
-                      isGameActive
+                      isTestMode
+                        ? "text-amber-400 border-amber-500/40"
+                        : hasVirtualCable
                         ? "text-tactical-green border-tactical-green/40 shadow-sm"
-                        : "text-slate-300 border-tactical-700"
+                        : "text-tactical-accent border-tactical-accent/40"
                     }`}
                   >
-                    {currentProcess}
+                    {isTestMode
+                      ? "MODO DE PRUEBA (GLOBAL)"
+                      : selectedDevice || "Dispositivo Estándar"}
                   </span>
                 </div>
                 <p className="text-xs text-slate-300 font-mono">
-                  {isGameActive
-                    ? "✓ Juego competitivo activo. Todos los realces tácticos y protección de oído están funcionando."
-                    : "El optimizador cambiará automáticamente al perfil 'JUEGOS' en cuanto entres a tu partida."}
+                  {isTestMode
+                    ? "⚠️ Modo de prueba activo. Filtros tácticos reproduciéndose en todo el sistema para testear."
+                    : hasVirtualCable
+                    ? `✓ Warzone aislado en '${selectedDevice || "CABLE Input"}'. Discord y Windows suenan sin compresión ni distorsión.`
+                    : "Para aislar Discord de los filtros de Warzone, recomendamos configurar VB-Cable en la pestaña 'Calidad de Sonido'."}
                 </p>
               </div>
 
-              {/* Mode switch */}
+              {/* Profile switch (Juegos / Normal) */}
               <div className="flex items-center p-1 rounded-lg bg-tactical-900 border border-tactical-700 text-xs font-mono shrink-0">
                 <button
-                  onClick={() => setProfileMode("auto")}
+                  onClick={() => {
+                    setActiveProfile("JUEGOS");
+                    activeProfileRef.current = "JUEGOS";
+                    syncEqProfile(gameSlidersRef.current, "JUEGOS");
+                    triggerAudioRefresh();
+                  }}
                   className={`px-3 py-1 rounded transition-colors ${
-                    profileMode === "auto"
+                    activeProfile === "JUEGOS"
                       ? "bg-tactical-accent text-tactical-900 font-bold"
                       : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
-                  Automático
+                  Perfil Juegos
                 </button>
                 <button
-                  onClick={() => setProfileMode("manual")}
+                  onClick={() => {
+                    setActiveProfile("NORMAL");
+                    activeProfileRef.current = "NORMAL";
+                    syncEqProfile(normalSlidersRef.current, "NORMAL");
+                    triggerAudioRefresh();
+                  }}
                   className={`px-3 py-1 rounded transition-colors ${
-                    profileMode === "manual"
+                    activeProfile === "NORMAL"
                       ? "bg-tactical-accent text-tactical-900 font-bold"
                       : "text-slate-400 hover:text-slate-200"
                   }`}
                 >
-                  Manual
+                  Perfil Normal
                 </button>
               </div>
             </div>
@@ -832,6 +978,137 @@ export const App: React.FC = () => {
         {/* TAB 2: CALIDAD DE SONIDO */}
         {activeTab === "calidad" && (
           <div className="space-y-4 animate-in fade-in-50 duration-150">
+            {/* Test Mode Banner Alert */}
+            {isTestMode && (
+              <div className="p-3.5 rounded-xl bg-amber-500/15 border border-amber-500/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-200 animate-in fade-in duration-150">
+                <div className="flex items-start sm:items-center space-x-2.5">
+                  <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5 sm:mt-0" />
+                  <div>
+                    <span className="text-xs font-mono font-bold block text-amber-300">
+                      ⚠️ MODO DE PRUEBA ACTIVO: FILTROS APLICADOS A TODO EL SISTEMA
+                    </span>
+                    <span className="text-[11px] text-slate-300 block">
+                      Los filtros de pasos, compresión dinámica y limitador se están aplicando globalmente. Abre YouTube o Spotify para calibrar.
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={handleToggleTestMode}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-tactical-900 font-mono text-xs font-bold shrink-0 transition-colors shadow-sm"
+                >
+                  Desactivar Modo de Prueba
+                </button>
+              </div>
+            )}
+
+            {/* Audio Routing & Warzone Isolation Panel */}
+            <section className="p-4 rounded-xl bg-tactical-850 border border-tactical-700 space-y-3.5 shadow-md">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                <div className="flex items-center space-x-2.5">
+                  <div className="p-2 rounded-lg bg-tactical-800 text-tactical-accent border border-tactical-700">
+                    <Radio className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold font-mono text-slate-100 flex items-center gap-2">
+                      ENRUTAMIENTO DE AUDIO (AISLAMIENTO DE WARZONE)
+                      {hasVirtualCable && (
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-tactical-green/20 text-tactical-green border border-tactical-green/40 font-normal">
+                          VB-CABLE ACTIVO
+                        </span>
+                      )}
+                    </h3>
+                    <p className="text-[11px] text-slate-400 font-mono">
+                      Aplica el ecualizador y compresor únicamente a Call of Duty; Discord y tu navegador se mantienen intactos.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Test Mode Switch button */}
+                <button
+                  onClick={handleToggleTestMode}
+                  title="Activa el modo de prueba para escuchar los filtros en YouTube o Spotify"
+                  className={`px-3 py-1.5 rounded-lg text-xs font-mono font-bold flex items-center space-x-1.5 transition-all shrink-0 border ${
+                    isTestMode
+                      ? "bg-amber-500 text-tactical-900 border-amber-400 shadow-md shadow-amber-500/30"
+                      : "bg-tactical-800 hover:bg-tactical-750 text-slate-300 border-tactical-600"
+                  }`}
+                >
+                  <FlaskConical className="w-3.5 h-3.5 text-amber-400" />
+                  <span>{isTestMode ? "MODO DE PRUEBA [ON]" : "PROBAR EN YOUTUBE"}</span>
+                </button>
+              </div>
+
+              {/* Selector and Actions */}
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center">
+                <div className="md:col-span-7 flex flex-col space-y-1">
+                  <label className="text-[11px] font-mono text-slate-400">
+                    Dispositivo filtrado por Equalizer APO:
+                  </label>
+                  <div className="relative">
+                    <select
+                      value={selectedDevice}
+                      onChange={(e) => handleDeviceChange(e.target.value)}
+                      className="w-full px-3 py-2 rounded-lg bg-tactical-900 border border-tactical-600 text-xs font-mono text-slate-200 focus:outline-none focus:border-tactical-accent transition-colors"
+                    >
+                      {audioDevices.length === 0 ? (
+                        <option value="">Cargando dispositivos de audio...</option>
+                      ) : (
+                        audioDevices.map((dev) => (
+                          <option
+                            key={dev.id}
+                            value={dev.endpoint_name || dev.name}
+                          >
+                            {dev.name} {dev.is_virtual_cable ? "⭐ (Recomendado)" : ""}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="md:col-span-5 flex items-end space-x-2 pt-1 md:pt-5">
+                  <button
+                    onClick={() => setShowCableModal(true)}
+                    className="flex-1 px-3 py-2 rounded-lg bg-tactical-accent hover:bg-cyan-400 text-tactical-900 font-mono text-xs font-bold flex items-center justify-center space-x-1.5 transition-colors shadow-sm"
+                  >
+                    <Headphones className="w-3.5 h-3.5" />
+                    <span>Aislar Warzone (Cable)</span>
+                  </button>
+
+                  <button
+                    onClick={handleAutoRouteGame}
+                    title="Intenta reasignar la salida de cod.exe automáticamente a CABLE Input"
+                    className="px-3 py-2 rounded-lg bg-tactical-800 hover:bg-tactical-750 border border-tactical-600 text-xs font-mono text-slate-300 flex items-center justify-center transition-colors"
+                  >
+                    <span>Auto-Enrutar</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Notice Message if any */}
+              {routingNotice && (
+                <div className="p-2.5 rounded-lg bg-tactical-900 border border-tactical-accent/40 text-xs text-tactical-accent font-mono">
+                  {routingNotice}
+                </div>
+              )}
+
+              {/* Status footer pill */}
+              <div className="p-2.5 rounded-lg bg-tactical-900/80 border border-tactical-750 flex flex-wrap items-center justify-between text-[11px] font-mono gap-2">
+                <div className="flex items-center space-x-2">
+                  <span className="text-slate-400">Destino de Filtros:</span>
+                  <span className="text-tactical-accent font-bold">
+                    {isTestMode ? "TODO EL SISTEMA (Modo de Prueba)" : selectedDevice || "Dispositivo no seleccionado"}
+                  </span>
+                </div>
+                <div className="flex items-center space-x-2 text-slate-400">
+                  <span>Discord & Navegador:</span>
+                  <span className="text-tactical-green font-bold">
+                    {hasVirtualCable && !isTestMode ? "100% Intacto (Salida Directa)" : "Compartido"}
+                  </span>
+                </div>
+              </div>
+            </section>
+
             {/* Top Selectors: AutoEQ Search + 3D Spatial Radar */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {/* Headphone Real-time Search */}
@@ -915,7 +1192,7 @@ export const App: React.FC = () => {
                 values={activeSliders}
                 onChange={handleSliderChange}
                 onRelease={handleSliderRelease}
-                disabled={activeProfile === "NORMAL" && profileMode === "manual"}
+                disabled={activeProfile === "NORMAL"}
               />
             </section>
           </div>
@@ -1138,6 +1415,16 @@ export const App: React.FC = () => {
           onOpenDownloadUrl={openSourceForge}
         />
       )}
+
+      {/* Virtual Cable Isolation Setup Modal */}
+      <VirtualCableModal
+        isOpen={showCableModal}
+        onClose={() => setShowCableModal(false)}
+        hasVirtualCable={hasVirtualCable}
+        selectedDevice={selectedDevice}
+        onOpenAppVolumeSettings={handleOpenAppVolume}
+        onOpenSoundControlPanel={handleOpenSoundControl}
+      />
     </div>
   );
 };

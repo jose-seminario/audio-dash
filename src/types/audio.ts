@@ -27,6 +27,13 @@ export interface HrtfProfile {
   filename: string;
 }
 
+export interface AudioDevice {
+  id: string;
+  name: string;
+  endpoint_name: string;
+  is_virtual_cable: boolean;
+}
+
 export interface DependencyStatus {
   equalizer_apo_installed: boolean;
   config_linked: boolean;
