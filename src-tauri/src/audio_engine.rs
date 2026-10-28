@@ -333,20 +333,18 @@ pub async fn force_audio_refresh() -> Result<(), String> {
 
 #[cfg(windows)]
 fn trigger_windows_audio_endpoint_notification() {
+    use crate::com_guard::ComGuard;
     use windows::Win32::Media::Audio::{
         eMultimedia, eRender, IMMDeviceEnumerator, MMDeviceEnumerator,
     };
-    use windows::Win32::System::Com::{
-        CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
-    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 
+    let _com = ComGuard::new_mta();
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
         if let Ok(enumerator) =
             CoCreateInstance::<_, IMMDeviceEnumerator>(&MMDeviceEnumerator, None, CLSCTX_ALL)
         {
             let _ = enumerator.GetDefaultAudioEndpoint(eRender, eMultimedia);
         }
-        CoUninitialize();
     }
 }

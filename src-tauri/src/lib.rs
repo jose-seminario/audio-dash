@@ -1,6 +1,7 @@
 pub mod audio_engine;
 pub mod backup_system;
 pub mod clutch_mode;
+pub mod com_guard;
 pub mod dependencies;
 pub mod hrtf_engine;
 pub mod system_audit;
@@ -79,12 +80,6 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
-            #[cfg(windows)]
-            unsafe {
-                use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
-                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-            }
-
             // Asegurar creación de directorios en %APPDATA%\AudioDash
             dependencies::ensure_app_directories();
 

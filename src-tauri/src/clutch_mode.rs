@@ -12,26 +12,34 @@ pub fn is_clutch_active() -> bool {
 
 #[cfg(windows)]
 fn adjust_discord_volume(target_volume: f32) -> Option<f32> {
-    use winmix::WinMix;
-    unsafe {
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    }
-    let winmix = unsafe { WinMix::default() };
-    let sessions = unsafe { winmix.enumerate().ok()? };
-    let mut prev_volume = None;
+    let handle = std::thread::Builder::new()
+        .name("discord-volume-adjuster".to_string())
+        .spawn(move || {
+            use crate::com_guard::ComGuard;
+            use winmix::WinMix;
 
-    for session in sessions {
-        let p = session.path.to_lowercase();
-        if p.contains("discord.exe") {
-            if prev_volume.is_none() {
-                prev_volume = unsafe { session.vol.get_master_volume().ok() };
+            let _com = ComGuard::new_mta();
+            let winmix = unsafe { WinMix::default() };
+            let sessions = unsafe { winmix.enumerate().ok()? };
+            let mut prev_volume = None;
+
+            for session in sessions {
+                let p = session.path.to_lowercase();
+                if p.contains("discord.exe") {
+                    if prev_volume.is_none() {
+                        prev_volume = unsafe { session.vol.get_master_volume().ok() };
+                    }
+                    let _ = unsafe { session.vol.set_master_volume(target_volume) };
+                }
             }
-            let _ = unsafe { session.vol.set_master_volume(target_volume) };
-        }
-    }
 
-    prev_volume
+            prev_volume
+        });
+
+    match handle {
+        Ok(thread_handle) => thread_handle.join().unwrap_or(None),
+        Err(_) => None,
+    }
 }
 
 #[cfg(not(windows))]
