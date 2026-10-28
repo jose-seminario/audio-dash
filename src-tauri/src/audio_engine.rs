@@ -277,7 +277,22 @@ pub fn generate_apo_config(
     config
 }
 
-/// Atomically writes config in %APPDATA%\AudioDash\config.txt
+/// Helper to trigger hot-reload of audio buffer in Equalizer APO
+pub fn execute_audio_refresh() {
+    let path = get_user_config_path();
+    if path.exists() {
+        if let Ok(file) = OpenOptions::new().write(true).open(&path) {
+            let _ = file.set_len(file.metadata().map(|m| m.len()).unwrap_or(0));
+        }
+    }
+
+    #[cfg(windows)]
+    {
+        trigger_windows_audio_endpoint_notification();
+    }
+}
+
+/// Atomically writes config in Equalizer APO folder (AudioDash.txt via AudioDash.tmp)
 #[tauri::command]
 pub fn update_eq_profile(
     slider_values: SliderValues,
@@ -310,7 +325,8 @@ pub fn update_eq_profile(
         let _ = fs::create_dir_all(parent);
     }
 
-    let write_result = (|| -> Result<(), std::io::Error> {
+    // 1. Escritura atómica inicial en archivo temporal AudioDash.tmp
+    let tmp_write_res = (|| -> Result<(), std::io::Error> {
         let mut tmp_file = OpenOptions::new()
             .create(true)
             .write(true)
@@ -320,21 +336,68 @@ pub fn update_eq_profile(
         tmp_file.write_all(content.as_bytes())?;
         tmp_file.flush()?;
         drop(tmp_file);
-
-        if fs::rename(&tmp_path, &config_path).is_err() {
-            fs::write(&config_path, content.as_bytes())?;
-            let _ = fs::remove_file(&tmp_path);
-        }
         Ok(())
     })();
 
-    if let Err(_) = write_result {
-        fs::write(&config_path, content.as_bytes())
-            .map_err(|err| format!("Error escribiendo archivo de configuración: {}", err))?;
+    if let Err(err) = tmp_write_res {
+        let is_permission = err.kind() == std::io::ErrorKind::PermissionDenied
+            || err.raw_os_error() == Some(5);
+        let msg = if is_permission {
+            "PERMISSION_DENIED: No se pudo actualizar el audio. Reabre Audio Dash como Administrador".to_string()
+        } else {
+            format!("Error escribiendo archivo temporal: {}", err)
+        };
+        return Err(msg);
+    }
+
+    // 2. Reemplazo seguro atómico (Safe Write):
+    //    Intenta rename directo; si falla porque el archivo destino existe o está bloqueado,
+    //    elimina el destino primero y renombra, o realiza copia segura y elimina .tmp.
+    let mut replaced = false;
+
+    // Intento 1: Rename directo
+    if fs::rename(&tmp_path, &config_path).is_ok() {
+        replaced = true;
+    } else {
+        // Intento 2: Si rename falla porque el destino existe, borrar primero y renombrar el .tmp
+        if config_path.exists() {
+            let _ = fs::remove_file(&config_path);
+        }
+        if fs::rename(&tmp_path, &config_path).is_ok() {
+            replaced = true;
+        } else {
+            // Intento 3: Copia segura std::fs::copy y luego remover .tmp
+            if fs::copy(&tmp_path, &config_path).is_ok() {
+                let _ = fs::remove_file(&tmp_path);
+                replaced = true;
+            } else {
+                // Intento 4: Escritura directa sobre el archivo en caso de compartición de lectura
+                if let Ok(mut direct_file) = OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(&config_path)
+                {
+                    if direct_file.write_all(content.as_bytes()).is_ok() {
+                        let _ = direct_file.flush();
+                        let _ = fs::remove_file(&tmp_path);
+                        replaced = true;
+                    }
+                }
+            }
+        }
+    }
+
+    if !replaced {
+        let _ = fs::remove_file(&tmp_path);
+        return Err("PERMISSION_DENIED: No se pudo actualizar el audio. Reabre Audio Dash como Administrador".to_string());
     }
 
     // Asegurar que el config.txt principal de Equalizer APO incluya AudioDash.txt
     ensure_apo_config_linked();
+
+    // 3. Debounce y Refresco: Llamar a force_audio_refresh justo después de que el archivo
+    //    se haya renombrado con éxito, para que Equalizer APO lea el nuevo archivo inmediatamente.
+    execute_audio_refresh();
 
     Ok(())
 }
@@ -401,18 +464,7 @@ pub async fn ensure_vst_plugin_installed() -> Result<bool, String> {
 #[tauri::command]
 pub async fn force_audio_refresh() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
-        let path = get_user_config_path();
-        if path.exists() {
-            if let Ok(file) = OpenOptions::new().write(true).open(&path) {
-                let _ = file.set_len(file.metadata().map(|m| m.len()).unwrap_or(0));
-            }
-        }
-
-        #[cfg(windows)]
-        {
-            trigger_windows_audio_endpoint_notification();
-        }
-
+        execute_audio_refresh();
         Ok::<(), String>(())
     })
     .await

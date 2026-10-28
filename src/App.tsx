@@ -222,6 +222,7 @@ export const App: React.FC = () => {
   const [isRestoring, setIsRestoring] = useState<boolean>(false);
   const [showPanicConfirm, setShowPanicConfirm] = useState<boolean>(false);
   const [tabFeedbackMessage, setTabFeedbackMessage] = useState<string | null>(null);
+  const [permissionError, setPermissionError] = useState<string | null>(null);
 
   const activeSliders = activeProfile === "JUEGOS" ? gameSliders : normalSliders;
 
@@ -286,8 +287,24 @@ export const App: React.FC = () => {
           selectedDevice: targetDev || null,
           testMode: isTest,
         });
+
+        // Limpiar advertencia si la sincronización fue exitosa
+        setPermissionError(null);
       } catch (err) {
         console.error("Error sincronizando archivo de EQ:", err);
+        const errStr = String(err);
+        if (
+          errStr.includes("PERMISSION_DENIED") ||
+          errStr.includes("Administrador") ||
+          errStr.includes("Access is denied") ||
+          errStr.includes("denied")
+        ) {
+          setPermissionError(
+            "No se pudo actualizar el audio. Reabre Audio Dash como Administrador"
+          );
+        } else {
+          setPermissionError(`Error de sincronización: ${errStr}`);
+        }
       }
     },
     []
@@ -593,8 +610,9 @@ export const App: React.FC = () => {
       gameSlidersRef.current = updated;
 
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = setTimeout(() => {
-        syncEqProfile(updated, "JUEGOS");
+      debounceTimerRef.current = setTimeout(async () => {
+        await syncEqProfile(updated, "JUEGOS");
+        triggerAudioRefresh();
       }, 75);
     } else {
       const updated = { ...normalSliders, [key]: val };
@@ -602,13 +620,14 @@ export const App: React.FC = () => {
       normalSlidersRef.current = updated;
 
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-      debounceTimerRef.current = setTimeout(() => {
-        syncEqProfile(updated, "NORMAL");
+      debounceTimerRef.current = setTimeout(async () => {
+        await syncEqProfile(updated, "NORMAL");
+        triggerAudioRefresh();
       }, 75);
     }
   };
 
-  const handleSliderRelease = () => {
+  const handleSliderRelease = async () => {
     if (debounceTimerRef.current) {
       clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
@@ -617,7 +636,7 @@ export const App: React.FC = () => {
       activeProfileRef.current === "JUEGOS"
         ? gameSlidersRef.current
         : normalSlidersRef.current;
-    syncEqProfile(currentValues, activeProfileRef.current);
+    await syncEqProfile(currentValues, activeProfileRef.current);
     triggerAudioRefresh();
   };
 
@@ -800,6 +819,29 @@ export const App: React.FC = () => {
           </span>
         </div>
       </nav>
+
+      {/* Permission Denied Alert Toast */}
+      {permissionError && (
+        <div className="shrink-0 px-6 py-3 bg-red-950/80 border-b border-red-500/80 text-white flex items-center justify-between shadow-2xl animate-in slide-in-from-top-1 duration-150 z-40">
+          <div className="flex items-center space-x-3">
+            <div className="p-1 rounded-md bg-red-600/30 text-red-400 border border-red-500/50">
+              <AlertOctagon className="w-5 h-5 text-red-400 shrink-0" />
+            </div>
+            <div className="text-xs font-mono">
+              <span className="font-bold text-red-300 uppercase mr-2 tracking-wide">
+                [Acceso Denegado]
+              </span>
+              <span className="text-white font-semibold">{permissionError}</span>
+            </div>
+          </div>
+          <button
+            onClick={() => setPermissionError(null)}
+            className="px-3 py-1 rounded bg-tactical-800 hover:bg-tactical-700 border border-tactical-600 text-xs font-mono text-slate-200 transition-colors shadow-sm"
+          >
+            Cerrar
+          </button>
+        </div>
+      )}
 
       {/* Main Tab Content */}
       <main className="flex-1 min-h-0 px-6 pt-6 pb-8 max-w-5xl w-full mx-auto space-y-4 overflow-y-auto">
