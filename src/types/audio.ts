@@ -56,3 +56,10 @@ export interface SystemAuditResult {
   checks: AuditCheckItem[];
   timestamp: string;
 }
+
+export interface ProcessScanResult {
+  process_name: string;
+  window_title: string;
+  is_game: boolean;
+  matched_by: string;
+}

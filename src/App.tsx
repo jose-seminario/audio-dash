@@ -2,10 +2,12 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   SliderValues,
   ProfileType,
+  ProfileMode,
   DependencyStatus,
   SystemAuditResult,
   HrtfProfile,
   AudioDevice,
+  ProcessScanResult,
 } from "./types/audio";
 import { AudioSliders } from "./components/AudioSliders";
 import { AuditModal } from "./components/AuditModal";
@@ -13,6 +15,7 @@ import { WelcomeSetup } from "./components/WelcomeSetup";
 import { HeadphoneSearch } from "./components/HeadphoneSearch";
 import { InGameGuideModal } from "./components/InGameGuideModal";
 import { VirtualCableModal } from "./components/VirtualCableModal";
+import { CustomGameModal } from "./components/CustomGameModal";
 import {
   Volume2,
   RefreshCw,
@@ -34,6 +37,7 @@ import {
   Layers,
   Headphones,
   FlaskConical,
+  Plus,
 } from "lucide-react";
 
 // Safe wrapper for Tauri invoke (falls back gracefully in browser dev mode)
@@ -82,6 +86,39 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
       ],
     } as unknown as T;
   }
+  if (cmd === "scan_running_game_now") {
+    return {
+      process_name: "cod.exe",
+      window_title: "Call of Duty® HQ",
+      is_game: true,
+      matched_by: "cod_family",
+    } as unknown as T;
+  }
+  if (cmd === "get_running_processes_list") {
+    return ["cod.exe", "Discord.exe", "Spotify.exe", "chrome.exe"] as unknown as T;
+  }
+  if (cmd === "get_custom_game_exes") {
+    return [] as unknown as T;
+  }
+  if (cmd === "add_custom_game_exe") {
+    return [(args?.exe_name as string) || "game.exe"] as unknown as T;
+  }
+  if (cmd === "get_audio_devices") {
+    return [
+      {
+        id: "cable_input",
+        name: "CABLE Input (VB-Audio Virtual Cable)",
+        endpoint_name: "CABLE Input",
+        is_virtual_cable: true,
+      },
+      {
+        id: "speakers",
+        name: "Altavoces (Realtek Audio)",
+        endpoint_name: "Altavoces",
+        is_virtual_cable: false,
+      },
+    ] as unknown as T;
+  }
   if (cmd === "ensure_vst_plugin_installed" || cmd === "ensure_hrir_installed") {
     return true as unknown as T;
   }
@@ -89,28 +126,6 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
     return false as unknown as T;
   }
   if (cmd === "toggle_clutch_mode") {
-    return true as unknown as T;
-  }
-  if (cmd === "get_audio_devices") {
-    return [
-      {
-        id: "{mock-cable-guid}",
-        name: "CABLE Input (VB-Audio Virtual Cable)",
-        endpoint_name: "CABLE Input",
-        is_virtual_cable: true,
-      },
-      {
-        id: "{mock-realtek-guid}",
-        name: "Altavoces (Realtek(R) Audio)",
-        endpoint_name: "Altavoces",
-        is_virtual_cable: false,
-      },
-    ] as unknown as T;
-  }
-  if (cmd === "route_game_to_virtual_cable") {
-    return "Call of Duty no está abierto. Sigue las instrucciones del asistente." as unknown as T;
-  }
-  if (cmd === "open_app_volume_settings" || cmd === "open_sound_control_panel") {
     return true as unknown as T;
   }
   return true as unknown as T;
@@ -181,7 +196,21 @@ export const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<ActiveTab>("perfil");
 
   // Profiles and active mode state
+  const [profileMode, setProfileMode] = useState<ProfileMode>("auto");
+  const profileModeRef = useRef(profileMode);
+  profileModeRef.current = profileMode;
+
   const [activeProfile, setActiveProfile] = useState<ProfileType>("JUEGOS");
+
+  // Real-time Dynamic Game Detection state
+  const [currentProcess, setCurrentProcess] = useState<string>("Buscando juego...");
+  const [isGameActive, setIsGameActive] = useState<boolean>(false);
+  const [gameMatchDetail, setGameMatchDetail] = useState<string>("none");
+  const [isScanningGame, setIsScanningGame] = useState<boolean>(false);
+  const [showCustomGameModal, setShowCustomGameModal] = useState<boolean>(false);
+  const [customGameList, setCustomGameList] = useState<string[]>([]);
+  const [runningProcessList, setRunningProcessList] = useState<string[]>([]);
+  const [isLoadingProcesses, setIsLoadingProcesses] = useState<boolean>(false);
 
   // Audio Devices & Routing (Warzone Isolation & Test Mode)
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
@@ -346,30 +375,85 @@ export const App: React.FC = () => {
     }
   }, []);
 
+  const loadAudioDevices = useCallback(async () => {
+    try {
+      const devs = await tauriInvoke<AudioDevice[]>("get_audio_devices");
+      setAudioDevices(devs);
+      if (devs.length > 0 && !selectedDeviceRef.current) {
+        const preferred = devs.find((d) => d.is_virtual_cable) || devs[0];
+        const val = preferred.endpoint_name || preferred.name;
+        setSelectedDevice(val);
+        selectedDeviceRef.current = val;
+      }
+    } catch (e) {
+      console.warn("No se pudieron cargar dispositivos de audio:", e);
+    }
+  }, []);
+
+  // Real-time Manual Game Scan Action
+  const handleScanGameNow = useCallback(async () => {
+    setIsScanningGame(true);
+    try {
+      const res = await tauriInvoke<ProcessScanResult>("scan_running_game_now");
+      setCurrentProcess(res.process_name || "Sin juego activo");
+      setIsGameActive(res.is_game);
+      setGameMatchDetail(res.matched_by);
+
+      if (profileModeRef.current === "auto") {
+        const target: ProfileType = res.is_game ? "JUEGOS" : "NORMAL";
+        setActiveProfile(target);
+        activeProfileRef.current = target;
+        const vals = target === "JUEGOS" ? gameSlidersRef.current : normalSlidersRef.current;
+        await syncEqProfile(vals, target);
+        triggerAudioRefresh();
+      }
+    } catch (err) {
+      console.error("Error re-analizando juego:", err);
+    } finally {
+      setIsScanningGame(false);
+    }
+  }, [syncEqProfile, triggerAudioRefresh]);
+
+  const handleLoadCustomGames = useCallback(async () => {
+    try {
+      const list = await tauriInvoke<string[]>("get_custom_game_exes");
+      setCustomGameList(list || []);
+    } catch (e) {
+      console.warn("Error cargando juegos personalizados:", e);
+    }
+  }, []);
+
+  const handleRefreshProcesses = async () => {
+    setIsLoadingProcesses(true);
+    try {
+      const procs = await tauriInvoke<string[]>("get_running_processes_list");
+      setRunningProcessList(procs || []);
+    } catch (e) {
+      console.warn("Error listando procesos:", e);
+    } finally {
+      setIsLoadingProcesses(false);
+    }
+  };
+
+  const handleOpenCustomGameModal = async () => {
+    setShowCustomGameModal(true);
+    await handleLoadCustomGames();
+    await handleRefreshProcesses();
+  };
+
+  const handleAddCustomExe = async (exe: string) => {
+    try {
+      const updated = await tauriInvoke<string[]>("add_custom_game_exe", { exeName: exe });
+      setCustomGameList(updated || []);
+      await handleScanGameNow();
+    } catch (e) {
+      console.error("Error agregando ejecutable:", e);
+    }
+  };
+
   const handleRequestOptimization = async (): Promise<boolean> => {
     return await tauriInvoke<boolean>("request_system_optimization");
   };
-
-  const loadAudioDevices = useCallback(async () => {
-    try {
-      const devices = await tauriInvoke<AudioDevice[]>("get_audio_devices");
-      if (Array.isArray(devices) && devices.length > 0) {
-        setAudioDevices(devices);
-        const cable = devices.find((d) => d.is_virtual_cable);
-        if (cable) {
-          const defaultDev = cable.endpoint_name || cable.name;
-          setSelectedDevice((prev) => prev || defaultDev);
-          selectedDeviceRef.current = selectedDeviceRef.current || defaultDev;
-        } else if (devices.length > 0) {
-          const defaultDev = devices[0].endpoint_name || devices[0].name;
-          setSelectedDevice((prev) => prev || defaultDev);
-          selectedDeviceRef.current = selectedDeviceRef.current || defaultDev;
-        }
-      }
-    } catch (e) {
-      console.warn("Error cargando dispositivos de audio:", e);
-    }
-  }, []);
 
   const handleDeviceChange = (dev: string) => {
     setSelectedDevice(dev);
@@ -548,6 +632,8 @@ export const App: React.FC = () => {
     checkDependencies();
     runAudit();
     loadAudioDevices();
+    handleLoadCustomGames();
+    handleScanGameNow();
     tauriInvoke("ensure_vst_plugin_installed").catch(() => {});
     if (selectedHrtf) {
       tauriInvoke("ensure_hrir_installed", { filename: selectedHrtf }).catch(() => {});
@@ -555,9 +641,10 @@ export const App: React.FC = () => {
     syncEqProfile(activeSliders, activeProfile);
   }, []);
 
-  // Listen to background clutch toggle events (hotkey Ctrl+Shift+C)
+  // Listen to background clutch toggle events and dynamic game scan events
   useEffect(() => {
     let unlistenClutch: (() => void) | undefined;
+    let unlistenWindow: (() => void) | undefined;
     let isMounted = true;
 
     (async () => {
@@ -589,6 +676,35 @@ export const App: React.FC = () => {
             );
             triggerAudioRefresh();
           });
+
+          // Dynamic background window & game monitor listener
+          unlistenWindow = await listen<ProcessScanResult>("window_changed", (event) => {
+            if (!isMounted) return;
+            const res = event.payload;
+            setCurrentProcess(res.process_name);
+            setIsGameActive(res.is_game);
+            setGameMatchDetail(res.matched_by);
+
+            if (profileModeRef.current === "auto") {
+              const targetProfile: ProfileType = res.is_game ? "JUEGOS" : "NORMAL";
+              setActiveProfile(targetProfile);
+              activeProfileRef.current = targetProfile;
+              const currentVals =
+                targetProfile === "JUEGOS"
+                  ? gameSlidersRef.current
+                  : normalSlidersRef.current;
+              syncEqProfile(
+                currentVals,
+                targetProfile,
+                selectedHrtfRef.current,
+                isClutchActiveRef.current,
+                distanceAwareRef.current,
+                selectedDeviceRef.current,
+                isTestModeRef.current
+              );
+              triggerAudioRefresh();
+            }
+          });
         } catch (e) {
           console.warn("No se pudo registrar listener de eventos Tauri:", e);
         }
@@ -598,6 +714,7 @@ export const App: React.FC = () => {
     return () => {
       isMounted = false;
       if (unlistenClutch) unlistenClutch();
+      if (unlistenWindow) unlistenWindow();
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
     };
   }, [syncEqProfile, triggerAudioRefresh]);
@@ -799,23 +916,25 @@ export const App: React.FC = () => {
             className={`w-2 h-2 rounded-full ${
               isTestMode
                 ? "bg-amber-400 animate-pulse"
-                : hasVirtualCable
+                : isGameActive
                 ? "bg-tactical-green animate-pulse"
-                : "bg-tactical-accent"
+                : "bg-slate-500"
             }`}
           ></span>
           <span
             className={
               isTestMode
                 ? "text-amber-400 font-bold"
-                : hasVirtualCable
+                : isGameActive
                 ? "text-tactical-green font-bold"
-                : "text-slate-300"
+                : "text-slate-400"
             }
           >
             {isTestMode
               ? "Prueba Activa (Todo el Sistema)"
-              : `Filtros en: ${selectedDevice || "Salida Principal"}`}
+              : isGameActive
+              ? `Juego Activo: ${currentProcess}`
+              : "Esperando juego..."}
           </span>
         </div>
       </nav>
@@ -848,6 +967,78 @@ export const App: React.FC = () => {
         {/* TAB 1: PERFIL DE JUEGO */}
         {activeTab === "perfil" && (
           <div className="space-y-4 animate-in fade-in-50 duration-150">
+            {/* Real-time Dynamic Game Detection & Re-scan Panel */}
+            <div className="p-4 rounded-xl bg-tactical-850 border border-tactical-700 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-md">
+              <div className="flex items-center space-x-3 min-w-0">
+                <div
+                  className={`p-2.5 rounded-xl border shrink-0 transition-colors ${
+                    isGameActive
+                      ? "bg-tactical-green/15 text-tactical-green border-tactical-green/40 shadow-sm"
+                      : "bg-tactical-800 text-slate-400 border-tactical-700"
+                  }`}
+                >
+                  <Gamepad2 className="w-6 h-6" />
+                </div>
+                <div className="min-w-0">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-mono uppercase text-slate-400">
+                      Detección Inteligente de Juego:
+                    </span>
+                    <span
+                      className={`font-mono text-xs font-bold px-2 py-0.5 rounded ${
+                        isGameActive
+                          ? "bg-tactical-green/20 text-tactical-green border border-tactical-green/40 animate-pulse"
+                          : "bg-tactical-900 text-slate-400 border border-tactical-700"
+                      }`}
+                    >
+                      {isGameActive ? "JUEGO ACTIVO" : "EN ESPERA"}
+                    </span>
+                  </div>
+                  <h4 className="text-sm font-mono font-bold text-slate-100 flex items-center gap-1.5 mt-0.5 truncate">
+                    {isGameActive ? (
+                      <>
+                        <span className="text-tactical-accent truncate">🎮 {currentProcess}</span>
+                        <span className="text-xs text-slate-400 font-normal shrink-0">
+                          ({gameMatchDetail === "cod_family" ? "Call of Duty / Warzone" : gameMatchDetail === "custom_exe" ? "Personalizado" : gameMatchDetail})
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-slate-400 font-normal truncate">
+                        {currentProcess || "Ningún juego detectado"}
+                      </span>
+                    )}
+                  </h4>
+                  <p className="text-[11px] text-slate-400 font-mono mt-0.5">
+                    {isGameActive
+                      ? "✓ Sincronizado en tiempo real. Modo competitivo activo."
+                      : "¿Iniciaste el juego después de abrir Audio Dash? Presiona 'Re-Analizar'."}
+                  </p>
+                </div>
+              </div>
+
+              {/* Action Buttons: Re-scan & Configure custom games */}
+              <div className="flex items-center space-x-2 shrink-0">
+                <button
+                  onClick={handleScanGameNow}
+                  disabled={isScanningGame}
+                  className="px-3.5 py-2 rounded-lg bg-tactical-800 hover:bg-tactical-750 border border-tactical-accent/40 text-xs font-mono font-bold text-tactical-accent flex items-center space-x-1.5 transition-all shadow-sm disabled:opacity-50"
+                  title="Escanea inmediatamente todas las ventanas y procesos en busca de COD o cualquier shooter"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isScanningGame ? "animate-spin" : ""}`} />
+                  <span>{isScanningGame ? "Analizando..." : "Re-Analizar Juego"}</span>
+                </button>
+
+                <button
+                  onClick={handleOpenCustomGameModal}
+                  className="px-3 py-2 rounded-lg bg-tactical-800 hover:bg-tactical-750 border border-tactical-600 text-xs font-mono text-slate-300 hover:text-slate-100 flex items-center space-x-1.5 transition-colors"
+                  title="Configurar ejecutables personalizados o elegir de la lista de procesos abiertos"
+                >
+                  <Plus className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Configurar Juegos</span>
+                </button>
+              </div>
+            </div>
+
             {/* Friendly Game & Device Routing Status Banner */}
             <div className="p-4 rounded-xl bg-tactical-850 border border-tactical-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-md">
               <div className="space-y-1">
@@ -878,38 +1069,72 @@ export const App: React.FC = () => {
                 </p>
               </div>
 
-              {/* Profile switch (Juegos / Normal) */}
-              <div className="flex items-center p-1 rounded-lg bg-tactical-900 border border-tactical-700 text-xs font-mono shrink-0">
-                <button
-                  onClick={() => {
-                    setActiveProfile("JUEGOS");
-                    activeProfileRef.current = "JUEGOS";
-                    syncEqProfile(gameSlidersRef.current, "JUEGOS");
-                    triggerAudioRefresh();
-                  }}
-                  className={`px-3 py-1 rounded transition-colors ${
-                    activeProfile === "JUEGOS"
-                      ? "bg-tactical-accent text-tactical-900 font-bold"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  Perfil Juegos
-                </button>
-                <button
-                  onClick={() => {
-                    setActiveProfile("NORMAL");
-                    activeProfileRef.current = "NORMAL";
-                    syncEqProfile(normalSlidersRef.current, "NORMAL");
-                    triggerAudioRefresh();
-                  }}
-                  className={`px-3 py-1 rounded transition-colors ${
-                    activeProfile === "NORMAL"
-                      ? "bg-tactical-accent text-tactical-900 font-bold"
-                      : "text-slate-400 hover:text-slate-200"
-                  }`}
-                >
-                  Perfil Normal
-                </button>
+              {/* Profile switch (Automático / Manual) */}
+              <div className="flex items-center space-x-2">
+                <div className="flex items-center p-1 rounded-lg bg-tactical-900 border border-tactical-700 text-xs font-mono">
+                  <button
+                    onClick={() => {
+                      setProfileMode("auto");
+                      profileModeRef.current = "auto";
+                      handleScanGameNow();
+                    }}
+                    className={`px-3 py-1 rounded transition-colors ${
+                      profileMode === "auto"
+                        ? "bg-tactical-accent text-tactical-900 font-bold"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    Auto
+                  </button>
+                  <button
+                    onClick={() => {
+                      setProfileMode("manual");
+                      profileModeRef.current = "manual";
+                    }}
+                    className={`px-3 py-1 rounded transition-colors ${
+                      profileMode === "manual"
+                        ? "bg-tactical-accent text-tactical-900 font-bold"
+                        : "text-slate-400 hover:text-slate-200"
+                    }`}
+                  >
+                    Manual
+                  </button>
+                </div>
+
+                {profileMode === "manual" && (
+                  <div className="flex items-center p-1 rounded-lg bg-tactical-900 border border-tactical-700 text-xs font-mono">
+                    <button
+                      onClick={() => {
+                        setActiveProfile("JUEGOS");
+                        activeProfileRef.current = "JUEGOS";
+                        syncEqProfile(gameSlidersRef.current, "JUEGOS");
+                        triggerAudioRefresh();
+                      }}
+                      className={`px-3 py-1 rounded transition-colors ${
+                        activeProfile === "JUEGOS"
+                          ? "bg-tactical-green text-tactical-900 font-bold"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      Juegos
+                    </button>
+                    <button
+                      onClick={() => {
+                        setActiveProfile("NORMAL");
+                        activeProfileRef.current = "NORMAL";
+                        syncEqProfile(normalSlidersRef.current, "NORMAL");
+                        triggerAudioRefresh();
+                      }}
+                      className={`px-3 py-1 rounded transition-colors ${
+                        activeProfile === "NORMAL"
+                          ? "bg-tactical-accent text-tactical-900 font-bold"
+                          : "text-slate-400 hover:text-slate-200"
+                      }`}
+                    >
+                      Normal
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1119,7 +1344,7 @@ export const App: React.FC = () => {
 
                   <button
                     onClick={handleAutoRouteGame}
-                    title="Intenta reasignar la salida de cod.exe automáticamente a CABLE Input"
+                    title="Intenta reasignar la salida del juego automáticamente a CABLE Input"
                     className="px-3 py-2 rounded-lg bg-tactical-800 hover:bg-tactical-750 border border-tactical-600 text-xs font-mono text-slate-300 flex items-center justify-center transition-colors"
                   >
                     <span>Auto-Enrutar</span>
@@ -1466,6 +1691,19 @@ export const App: React.FC = () => {
         selectedDevice={selectedDevice}
         onOpenAppVolumeSettings={handleOpenAppVolume}
         onOpenSoundControlPanel={handleOpenSoundControl}
+      />
+
+      {/* Custom Game Detection Modal */}
+      <CustomGameModal
+        isOpen={showCustomGameModal}
+        onClose={() => setShowCustomGameModal(false)}
+        onAddCustomExe={handleAddCustomExe}
+        customGameList={customGameList}
+        runningProcesses={runningProcessList}
+        isLoadingProcesses={isLoadingProcesses}
+        onRefreshProcesses={handleRefreshProcesses}
+        currentDetectedGame={currentProcess}
+        isGameActive={isGameActive}
       />
     </div>
   );

@@ -103,7 +103,14 @@ pub async fn route_game_to_virtual_cable(
     device_name: Option<String>,
 ) -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
-        let target_process = process_name.unwrap_or_else(|| "cod.exe".to_string());
+        let target_process = process_name.unwrap_or_else(|| {
+            let scan = crate::window_monitor::scan_game_state_internal();
+            if scan.is_game {
+                scan.process_name
+            } else {
+                "cod.exe".to_string()
+            }
+        });
         let _target_dev = device_name.unwrap_or_else(|| "CABLE Input".to_string());
 
         #[cfg(windows)]
@@ -111,7 +118,7 @@ pub async fn route_game_to_virtual_cable(
             let pid = crate::system_tweaks::find_process_id_by_name(&target_process);
             if pid.is_none() {
                 return Err(format!(
-                    "Warzone ('{}') no está en ejecución. Inicia el juego primero para enrutarlo o configúralo manualmente en Windows.",
+                    "El juego ('{}') no está en ejecución. Inícialo primero para enrutarlo o configúralo manualmente en Windows.",
                     target_process
                 ));
             }

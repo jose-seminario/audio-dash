@@ -16,6 +16,8 @@ pub struct AppSettings {
     pub first_run_completed: bool,
     pub last_selected_profile: String,
     pub profile_mode: String,
+    #[serde(default)]
+    pub custom_game_exes: Vec<String>,
 }
 
 pub fn get_appdata_dir() -> PathBuf {
@@ -98,4 +100,29 @@ pub fn mark_first_run_completed() -> Result<(), String> {
     let mut settings = load_settings();
     settings.first_run_completed = true;
     save_settings(&settings)
+}
+
+#[tauri::command]
+pub fn add_custom_game_exe(exe_name: String) -> Result<Vec<String>, String> {
+    let mut settings = load_settings();
+    let clean = exe_name.trim().to_lowercase();
+    if clean.is_empty() {
+        return Err("El nombre del ejecutable no puede estar vacío.".to_string());
+    }
+    let exe_with_ext = if clean.ends_with(".exe") {
+        clean
+    } else {
+        format!("{}.exe", clean)
+    };
+
+    if !settings.custom_game_exes.contains(&exe_with_ext) {
+        settings.custom_game_exes.push(exe_with_ext);
+        save_settings(&settings)?;
+    }
+    Ok(settings.custom_game_exes)
+}
+
+#[tauri::command]
+pub fn get_custom_game_exes() -> Vec<String> {
+    load_settings().custom_game_exes
 }

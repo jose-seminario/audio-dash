@@ -10,13 +10,14 @@ pub mod system_tweaks;
 pub mod window_monitor;
 
 use audio_engine::{ensure_vst_plugin_installed, force_audio_refresh, update_eq_profile};
+use audio_router::{get_audio_devices, open_app_volume_settings, open_sound_control_panel, route_game_to_virtual_cable};
 use backup_system::restore_defaults;
 use clutch_mode::{get_clutch_state, init_clutch_hotkey, toggle_clutch_mode};
-use dependencies::{check_system_dependencies, mark_first_run_completed};
+use dependencies::{add_custom_game_exe, check_system_dependencies, get_custom_game_exes, mark_first_run_completed};
 use hrtf_engine::{ensure_hrir_installed, get_available_hrtf_profiles};
 use system_audit::{apply_leq_tweak, audit_system, open_windows_sound_settings, request_system_optimization};
-use audio_router::{get_audio_devices, open_app_volume_settings, open_sound_control_panel, route_game_to_virtual_cable};
 use system_tweaks::apply_audiodg_affinity;
+use window_monitor::{get_running_processes_list, scan_running_game_now, spawn_window_monitor};
 
 /// Crash logger panic hook: logs any panic with file and line to %APPDATA%\AudioDash\crash.log
 pub fn setup_panic_hook() {
@@ -87,6 +88,9 @@ pub fn run() {
             // Inicializar atajo de Clutch Mode protegido contra panics
             init_clutch_hotkey(&app.handle());
 
+            // Iniciar escáner inteligente de juego en segundo plano (0.0% CPU)
+            spawn_window_monitor(app.handle().clone());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -109,6 +113,10 @@ pub fn run() {
             route_game_to_virtual_cable,
             open_app_volume_settings,
             open_sound_control_panel,
+            scan_running_game_now,
+            get_running_processes_list,
+            add_custom_game_exe,
+            get_custom_game_exes,
         ]);
 
     if let Err(err) = builder.run(tauri::generate_context!()) {
