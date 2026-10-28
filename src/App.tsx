@@ -8,6 +8,7 @@ import {
   AudioDevice,
   ProcessScanResult,
 } from "./types/audio";
+import { HEADPHONE_PROFILES } from "./data/headphones";
 import { AudioSliders } from "./components/AudioSliders";
 import { AuditModal } from "./components/AuditModal";
 import { WelcomeSetup } from "./components/WelcomeSetup";
@@ -319,7 +320,6 @@ export const App: React.FC = () => {
       testMode?: boolean
     ) => {
       try {
-        const { HEADPHONE_PROFILES } = await import("./data/headphones");
         const found = HEADPHONE_PROFILES.find((h) => h.id === selectedHeadphoneIdRef.current);
         const filters = found ? found.filters : [];
 

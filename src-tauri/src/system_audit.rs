@@ -289,7 +289,7 @@ fn check_audio_sample_rate_and_depth() -> (bool, String) {
                     let prop_path = format!("{}\\Properties", dev_path);
                     if let Ok(prop_key) = hklm.open_subkey(&prop_path) {
                         let adapter_name: String = prop_key
-                            .get_value("{b3f8fa53-0004-438e-9003-51a46e139bfc},6")
+                            .get_value::<String, _>("{b3f8fa53-0004-438e-9003-51a46e139bfc},6")
                             .unwrap_or_default()
                             .to_lowercase();
                         let is_virtual = adapter_name.contains("vb-audio") || adapter_name.contains("cable");

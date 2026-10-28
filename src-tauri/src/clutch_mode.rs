@@ -16,7 +16,7 @@ fn adjust_discord_volume_internal(target_volume: f32) -> Option<f32> {
     use winmix::WinMix;
 
     let _com = ComGuard::new_mta();
-    let winmix = unsafe { WinMix::default() };
+    let winmix = WinMix::default();
     let sessions = unsafe { winmix.enumerate().ok()? };
     let mut captured_volume = None;
 
