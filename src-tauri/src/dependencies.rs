@@ -19,12 +19,20 @@ pub struct AppSettings {
 }
 
 pub fn get_appdata_dir() -> PathBuf {
-    let mut path = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
+    let mut path = match dirs::config_dir() {
+        Some(d) => d,
+        None => PathBuf::from("."),
+    };
     path.push("AudioDash");
-    if !path.exists() {
-        let _ = fs::create_dir_all(&path);
-    }
+    let _ = fs::create_dir_all(&path);
     path
+}
+
+pub fn ensure_app_directories() {
+    let base = get_appdata_dir();
+    let _ = fs::create_dir_all(&base);
+    let _ = fs::create_dir_all(base.join("plugins"));
+    let _ = fs::create_dir_all(base.join("hrir"));
 }
 
 pub fn get_settings_path() -> PathBuf {
@@ -51,6 +59,7 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
 
 #[tauri::command]
 pub fn check_system_dependencies() -> DependencyStatus {
+    ensure_app_directories();
     let default_apo_path = Path::new(r"C:\Program Files\EqualizerAPO");
     let x86_apo_path = Path::new(r"C:\Program Files (x86)\EqualizerAPO");
 

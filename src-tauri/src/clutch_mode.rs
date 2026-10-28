@@ -13,6 +13,10 @@ pub fn is_clutch_active() -> bool {
 #[cfg(windows)]
 fn adjust_discord_volume(target_volume: f32) -> Option<f32> {
     use winmix::WinMix;
+    unsafe {
+        use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
     let winmix = unsafe { WinMix::default() };
     let sessions = unsafe { winmix.enumerate().ok()? };
     let mut prev_volume = None;
@@ -77,14 +81,17 @@ pub fn get_clutch_state() -> bool {
 
 /// Registers the global shortcut Ctrl+Shift+C
 pub fn init_clutch_hotkey(app: &AppHandle) {
-    let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyC);
-    let app_clone = app.clone();
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let shortcut = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyC);
+        let app_clone = app.clone();
 
-    let _ = app
-        .global_shortcut()
-        .on_shortcut(shortcut, move |_app, _sc, event| {
-            if event.state() == ShortcutState::Pressed {
-                let _ = toggle_clutch(&app_clone);
-            }
-        });
+        let _ = app
+            .global_shortcut()
+            .on_shortcut(shortcut, move |_app, _sc, event| {
+                if event.state() == ShortcutState::Pressed {
+                    let _ = toggle_clutch(&app_clone);
+                }
+            });
+    }))
+    .ok();
 }

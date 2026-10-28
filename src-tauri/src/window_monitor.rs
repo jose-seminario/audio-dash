@@ -85,27 +85,29 @@ pub fn get_foreground_process_name() -> Option<String> {
     Some("desktop".to_string())
 }
 
-/// Spawns the zero-overhead 500ms background loop
+/// Spawns the zero-overhead 500ms background loop safely on an independent OS thread
 pub fn spawn_window_monitor(app_handle: AppHandle) {
-    tokio::spawn(async move {
-        let mut last_detected = String::new();
+    let _ = std::thread::Builder::new()
+        .name("audio-dash-window-monitor".to_string())
+        .spawn(move || {
+            let mut last_detected = String::new();
 
-        loop {
-            let current = get_foreground_process_name().unwrap_or_else(|| "Escritorio".to_string());
+            loop {
+                let current = get_foreground_process_name().unwrap_or_else(|| "Escritorio".to_string());
 
-            if current != last_detected {
-                last_detected = current.clone();
-                let is_game = is_competitive_game(&current);
+                if current != last_detected {
+                    last_detected = current.clone();
+                    let is_game = is_competitive_game(&current);
 
-                let event = WindowChangeEvent {
-                    process_name: current,
-                    is_game,
-                };
+                    let event = WindowChangeEvent {
+                        process_name: current,
+                        is_game,
+                    };
 
-                let _ = app_handle.emit("window_changed", event);
+                    let _ = app_handle.emit("window_changed", event);
+                }
+
+                std::thread::sleep(Duration::from_millis(500));
             }
-
-            tokio::time::sleep(Duration::from_millis(500)).await;
-        }
-    });
+        });
 }

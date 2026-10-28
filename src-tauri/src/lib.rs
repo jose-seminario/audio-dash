@@ -16,16 +16,83 @@ use system_audit::{apply_leq_tweak, audit_system, open_windows_sound_settings, r
 use system_tweaks::apply_audiodg_affinity;
 use window_monitor::spawn_window_monitor;
 
+/// Crash logger panic hook: logs any panic with file and line to %APPDATA%\AudioDash\crash.log
+pub fn setup_panic_hook() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        let appdata_dir = dependencies::get_appdata_dir();
+        let _ = std::fs::create_dir_all(&appdata_dir);
+        let log_path = appdata_dir.join("crash.log");
+
+        let payload = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Error desconocido (sin mensaje descriptivo)".to_string()
+        };
+
+        let location = if let Some(loc) = panic_info.location() {
+            format!("{}:{}:{}", loc.file(), loc.line(), loc.column())
+        } else {
+            "Ubicacion desconocida".to_string()
+        };
+
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let epoch_sec = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let log_entry = format!(
+            "==================== CRASH REPORT ====================\n             Timestamp Unix: {} s\n             Error: {}\n             Ubicacion: {}\n             ======================================================\n\n",
+            epoch_sec, payload, location
+        );
+
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            use std::io::Write;
+            let _ = file.write_all(log_entry.as_bytes());
+        }
+
+        #[cfg(windows)]
+        unsafe {
+            use windows::core::HSTRING;
+            use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+            let title = HSTRING::from("Audio Dash - Error Inesperado");
+            let body = HSTRING::from(format!(
+                "Audio Dash ha sufrido un error inesperado:\n\n{}\n\nUbicacion:\n{}\n\nSe ha generado un registro en:\n{}",
+                payload,
+                location,
+                log_path.display()
+            ));
+            let _ = MessageBoxW(None, &body, &title, MB_OK | MB_ICONERROR);
+        }
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
-            // Spawn the 0.0% CPU background foreground window monitor
-            spawn_window_monitor(app.handle().clone());
+            #[cfg(windows)]
+            unsafe {
+                use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            }
 
-            // Initialize global hotkey for Clutch Mode (Ctrl+Shift+C)
+            // Asegurar creación de directorios en %APPDATA%\AudioDash
+            dependencies::ensure_app_directories();
+
+            // Spawn window monitor en hilo independiente (sin riesgo de panic)
+            let handle = app.handle().clone();
+            spawn_window_monitor(handle);
+
+            // Inicializar atajo de Clutch Mode protegido contra panics
             init_clutch_hotkey(&app.handle());
 
             Ok(())
@@ -46,7 +113,32 @@ pub fn run() {
             get_clutch_state,
             restore_defaults,
             open_windows_sound_settings,
-        ])
-        .run(tauri::generate_context!())
-        .expect("Error al ejecutar Audio Dash");
+        ]);
+
+    if let Err(err) = builder.run(tauri::generate_context!()) {
+        let appdata_dir = dependencies::get_appdata_dir();
+        let log_path = appdata_dir.join("crash.log");
+        let err_msg = format!("Error al ejecutar Audio Dash: {}\n", err);
+        if let Ok(mut file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+        {
+            use std::io::Write;
+            let _ = file.write_all(err_msg.as_bytes());
+        }
+
+        #[cfg(windows)]
+        unsafe {
+            use windows::core::HSTRING;
+            use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+            let title = HSTRING::from("Audio Dash - Error de Ejecucion");
+            let body = HSTRING::from(format!(
+                "No se pudo iniciar la interfaz de Audio Dash:\n\n{}\n\nDetalles guardados en:\n{}",
+                err,
+                log_path.display()
+            ));
+            let _ = MessageBoxW(None, &body, &title, MB_OK | MB_ICONERROR);
+        }
+    }
 }
