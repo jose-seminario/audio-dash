@@ -5,8 +5,11 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
 };
 #[cfg(windows)]
+use windows::Win32::System::SystemInformation::{GetSystemInfo, SYSTEM_INFO};
+#[cfg(windows)]
 use windows::Win32::System::Threading::{
-    OpenProcess, SetProcessAffinityMask, PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
+    OpenProcess, SetPriorityClass, SetProcessAffinityMask, HIGH_PRIORITY_CLASS,
+    PROCESS_QUERY_INFORMATION, PROCESS_SET_INFORMATION,
 };
 
 /// Finds the process ID of a given process name
@@ -38,7 +41,29 @@ pub fn find_process_id_by_name(process_name: &str) -> Option<u32> {
     }
 }
 
-/// Pins audiodg.exe to Performance Cores (P-Cores) to prevent micro-stutters and DPC audio latency
+/// Dynamically calculates a safe affinity mask based on actual hardware topology
+#[cfg(windows)]
+fn calculate_safe_affinity_mask() -> (usize, u32) {
+    unsafe {
+        let mut sys_info = SYSTEM_INFO::default();
+        GetSystemInfo(&mut sys_info);
+        let num_cpus = sys_info.dwNumberOfProcessors.max(1);
+
+        let mask = if num_cpus >= 4 {
+            // Reservar CPU 0 y 1 para interrupciones del SO y red; anclar audiodg a CPU 2 y 3
+            0x0C
+        } else if num_cpus >= 2 {
+            // Sistema de 2 o 3 núcleos: usar todos los disponibles
+            (1 << num_cpus) - 1
+        } else {
+            1
+        };
+
+        (mask, num_cpus)
+    }
+}
+
+/// Pins audiodg.exe and sets high priority to prevent micro-stutters and DPC audio latency
 #[tauri::command]
 pub async fn apply_audiodg_affinity() -> Result<String, String> {
     tokio::task::spawn_blocking(|| {
@@ -49,9 +74,7 @@ pub async fn apply_audiodg_affinity() -> Result<String, String> {
                     .to_string()
             })?;
 
-            // P-Core Affinity Mask: 0b00001100 = 0x0C (CPU 2 y 3)
-            // Esto ancla audiodg a núcleos de rendimiento físicos y libera CPU 0/1 para interrupciones del SO
-            let affinity_mask: usize = 0x0C;
+            let (affinity_mask, num_cpus) = calculate_safe_affinity_mask();
 
             // 1. Intento directo con Win32 API
             let win32_success = unsafe {
@@ -60,6 +83,7 @@ pub async fn apply_audiodg_affinity() -> Result<String, String> {
                     false,
                     pid,
                 ) {
+                    let _ = SetPriorityClass(handle, HIGH_PRIORITY_CLASS);
                     let res = SetProcessAffinityMask(handle, affinity_mask);
                     let _ = CloseHandle(handle);
                     res.is_ok()
@@ -70,42 +94,43 @@ pub async fn apply_audiodg_affinity() -> Result<String, String> {
 
             if win32_success {
                 return Ok(format!(
-                    "audiodg.exe (PID {}) anclado con éxito a núcleos P-Cores (Máscara 0x0C).",
-                    pid
+                    "audiodg.exe (PID {}) optimizado: Alta Prioridad y afinidad adaptativa (0x{:X} en {} núcleos).",
+                    pid, affinity_mask, num_cpus
                 ));
             }
 
-            // 2. Fallback con PowerShell si audiodg.exe está protegido por el subsistema de aislamiento
+            // 2. Fallback con PowerShell si audiodg.exe requiere elevación
             use std::process::Command;
             let script = format!(
-                "$p = Get-Process -Id {} -ErrorAction SilentlyContinue; if ($p) {{ $p.ProcessorAffinity = [IntPtr]{}; 'OK' }}",
+                "$p = Get-Process -Id {} -ErrorAction SilentlyContinue; if ($p) {{ $p.ProcessorAffinity = [IntPtr]{}; $p.PriorityClass = 'High'; 'OK' }}",
                 pid, affinity_mask
             );
 
+            let encoded = crate::system_audit::encode_powershell_script(&script);
             let ps_res = Command::new("powershell.exe")
                 .arg("-NoProfile")
                 .arg("-NonInteractive")
                 .arg("-WindowStyle")
                 .arg("Hidden")
-                .arg("-Command")
-                .arg(&script)
+                .arg("-EncodedCommand")
+                .arg(&encoded)
                 .output();
 
             if let Ok(out) = ps_res {
                 let stdout = String::from_utf8_lossy(&out.stdout);
                 if stdout.contains("OK") {
                     return Ok(format!(
-                        "audiodg.exe (PID {}) anclado exitosamente a P-Cores vía PowerShell.",
-                        pid
+                        "audiodg.exe (PID {}) optimizado vía PowerShell: Alta Prioridad y afinidad (0x{:X}).",
+                        pid, affinity_mask
                     ));
                 }
             }
 
-            Err("No se pudo modificar la afinidad de audiodg.exe. Ejecuta Audio Dash con permisos para gestionar servicios protegidos.".to_string())
+            Err("No se pudo ajustar la afinidad de audiodg.exe. Reabre Audio Dash como Administrador.".to_string())
         }
         #[cfg(not(windows))]
         {
-            Ok("Optimización de audiodg simulada (Plataforma no Windows)".to_string())
+            Ok("Optimización simulada en entorno no-Windows.".to_string())
         }
     })
     .await

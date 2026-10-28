@@ -19,36 +19,53 @@ pub fn is_competitive_game(
     let exe = exe_name.trim().to_lowercase();
     let title = window_title.trim().to_lowercase();
 
-    // 1. Ignorar launchers, herramientas del sistema y crash handlers
-    if exe.is_empty()
-        || exe.contains("crashhandler")
-        || exe.contains("crash_handler")
-        || exe.contains("reportcod")
-        || exe.contains("battle.net")
-        || exe.contains("steam")
-        || exe.contains("epicgames")
-        || exe.contains("discord")
-        || exe.contains("audiodash")
-        || exe.contains("explorer.exe")
-        || exe.contains("taskmgr")
-    {
-        return (false, "ignored");
+    if exe.is_empty() {
+        return (false, "none");
     }
 
-    // 2. Comprobar ejecutables personalizados agregados por el usuario
+    // 1. Excluir herramientas de desarrollo y ejecutables que comparten prefijo "cod" (ej. VS Code, Codex)
+    if exe == "code.exe"
+        || exe.starts_with("code_")
+        || exe == "codex.exe"
+        || exe == "codec.exe"
+        || exe == "code.cmd"
+    {
+        return (false, "ignored_dev_tool");
+    }
+
+    // 2. Excluir ejecutables específicos de launchers y herramientas (sin perjudicar juegos con 'steam' en el nombre)
+    let is_launcher = exe == "steam.exe"
+        || exe == "steamservice.exe"
+        || exe == "steamwebhelper.exe"
+        || exe == "battle.net.exe"
+        || exe == "agent.exe"
+        || exe == "epicgameslauncher.exe"
+        || exe == "discord.exe"
+        || exe == "audiodash.exe"
+        || exe == "explorer.exe"
+        || exe == "taskmgr.exe"
+        || exe.contains("crashhandler")
+        || exe.contains("crash_handler")
+        || exe.contains("reportcod");
+
+    if is_launcher {
+        return (false, "ignored_launcher");
+    }
+
+    // 3. Comprobar ejecutables personalizados agregados por el usuario
     for custom in custom_exes {
         let clean_custom = custom.trim().to_lowercase();
-        if !clean_custom.is_empty() && (exe == clean_custom || exe.contains(&clean_custom)) {
+        if !clean_custom.is_empty() && (exe == clean_custom || exe == format!("{}.exe", clean_custom)) {
             return (true, "custom_exe");
         }
     }
 
-    // 3. Familia Call of Duty / Warzone (Indestructible contra actualizaciones de nombre)
+    // 4. Familia Call of Duty / Warzone (Indestructible contra actualizaciones y temporadas)
     // Coincide con cod.exe, cod23-cod.exe, cod24-cod.exe, warzone.exe, ModernWarfare.exe, etc.
     let is_cod_exe = exe == "cod.exe"
-        || (exe.starts_with("cod") && exe.ends_with(".exe"))
-        || exe.contains("warzone")
-        || exe.contains("callofduty")
+        || (exe.starts_with("cod2") && exe.ends_with(".exe"))
+        || exe.starts_with("warzone")
+        || exe.starts_with("callofduty")
         || exe.contains("modernwarfare")
         || exe.contains("blackops")
         || exe.contains("vanguard");
@@ -62,7 +79,7 @@ pub fn is_competitive_game(
         return (true, "cod_family");
     }
 
-    // 4. Otros shooters competitivos populares
+    // 5. Otros shooters competitivos populares
     if exe == "cs2.exe" || exe == "csgo.exe" || title.contains("counter-strike") {
         return (true, "cs2");
     }
@@ -75,7 +92,7 @@ pub fn is_competitive_game(
     if exe.contains("tarkov") || title.contains("escape from tarkov") {
         return (true, "tarkov");
     }
-    if exe == "tslgame.exe" || title.contains("pubg") {
+    if exe == "tslgame.exe" || (title.contains("pubg") && !title.contains("browser")) {
         return (true, "pubg");
     }
     if exe.contains("rainbowsix") || title.contains("rainbow six") {
@@ -104,7 +121,6 @@ fn get_foreground_window_info() -> (String, String, u32) {
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
 
-        // Get window title
         let mut title_buf = [0u16; 512];
         let len = GetWindowTextW(hwnd, &mut title_buf);
         let title = if len > 0 {
@@ -113,7 +129,6 @@ fn get_foreground_window_info() -> (String, String, u32) {
             String::new()
         };
 
-        // Get process name by PID via Toolhelp
         let process_name = get_process_name_by_pid(pid).unwrap_or_else(|| "Desconocido".to_string());
 
         (process_name, title, pid)
@@ -232,7 +247,8 @@ pub fn list_active_processes() -> Vec<String> {
                         && !lower.starts_with("svchost")
                         && !lower.starts_with("conhost")
                         && !lower.starts_with("runtimebroker")
-                        && !lower.starts_with("system")
+                        && lower != "system"
+                        && lower != "system.exe"
                         && !lower.starts_with("dllhost")
                         && !lower.starts_with("taskhostw")
                     {
@@ -317,14 +333,14 @@ pub fn get_running_processes_list() -> Result<Vec<String>, String> {
     Ok(list_active_processes())
 }
 
-/// Spawns the lightweight background process & window monitor (0.0% CPU impact)
+/// Spawns the lightweight background process & window monitor
 pub fn spawn_window_monitor(app_handle: AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut last_game_state: Option<bool> = None;
         let mut last_process_name: String = String::new();
 
         loop {
-            tokio::time::sleep(Duration::from_millis(2500)).await;
+            tokio::time::sleep(Duration::from_millis(3000)).await;
 
             let result = scan_game_state_internal();
 

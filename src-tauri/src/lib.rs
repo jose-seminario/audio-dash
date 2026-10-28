@@ -9,7 +9,7 @@ pub mod system_audit;
 pub mod system_tweaks;
 pub mod window_monitor;
 
-use audio_engine::{ensure_vst_plugin_installed, force_audio_refresh, update_eq_profile};
+use audio_engine::{auto_install_equalizer_apo, ensure_vst_plugin_installed, force_audio_refresh, update_eq_profile};
 use audio_router::{get_audio_devices, open_app_volume_settings, open_sound_control_panel, route_game_to_virtual_cable};
 use backup_system::restore_defaults;
 use clutch_mode::{get_clutch_state, init_clutch_hotkey, toggle_clutch_mode};
@@ -88,7 +88,7 @@ pub fn run() {
             // Inicializar atajo de Clutch Mode protegido contra panics
             init_clutch_hotkey(&app.handle());
 
-            // Iniciar escáner inteligente de juego en segundo plano (0.0% CPU)
+            // Iniciar escáner inteligente de juego en segundo plano
             spawn_window_monitor(app.handle().clone());
 
             Ok(())
@@ -98,6 +98,7 @@ pub fn run() {
             mark_first_run_completed,
             update_eq_profile,
             ensure_vst_plugin_installed,
+            auto_install_equalizer_apo,
             force_audio_refresh,
             audit_system,
             request_system_optimization,

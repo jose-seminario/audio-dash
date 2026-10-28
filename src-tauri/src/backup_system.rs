@@ -1,15 +1,17 @@
 use crate::dependencies::get_appdata_dir;
+use crate::system_audit::encode_powershell_script;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct WindowsBackup {
     pub system_responsiveness: u32,
     pub network_throttling_index: u32,
     pub power_scheme_guid: String,
-    pub timestamp: String,
+    pub timestamp_unix: u64,
 }
 
 pub fn get_backup_file_path() -> PathBuf {
@@ -62,12 +64,16 @@ pub fn create_backup_if_not_exists() -> Result<(), String> {
     }
 
     let power_guid = get_current_power_scheme();
+    let now_unix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
 
     let backup = WindowsBackup {
         system_responsiveness: sys_resp,
         network_throttling_index: net_throttle,
         power_scheme_guid: power_guid,
-        timestamp: chrono_now_string(),
+        timestamp_unix: now_unix,
     };
 
     let json_bytes = serde_json::to_vec_pretty(&backup)
@@ -86,37 +92,27 @@ pub fn create_backup_if_not_exists() -> Result<(), String> {
     Ok(())
 }
 
-fn chrono_now_string() -> String {
-    // Lightweight timestamp without external crate
-    "Original Factory State".to_string()
-}
-
 /// Restores original factory settings (Panic Button / Rollback)
 #[tauri::command]
 pub async fn restore_defaults() -> Result<bool, String> {
     tokio::task::spawn_blocking(|| {
-        // 1. Reset %APPDATA%\AudioDash\config.txt to neutral bypass
+        // 1. Reset Equalizer APO config files to neutral bypass
         let config_path = crate::audio_engine::get_user_config_path();
         if let Ok(mut file) = OpenOptions::new().create(true).write(true).truncate(true).open(&config_path) {
             let neutral = "# --- Audio Dash Neutral Bypass / Factory Reset ---\nPreamp: 0.0 dB\n";
             let _ = file.write_all(neutral.as_bytes());
         }
 
-        // 2. Read backup values
+        // 2. Read backup values (Fail cleanly if backup file does not exist)
         let backup_path = get_backup_file_path();
-        let (sys_resp, net_throttle, power_guid) = if backup_path.exists() {
-            if let Ok(content) = fs::read_to_string(&backup_path) {
-                if let Ok(b) = serde_json::from_str::<WindowsBackup>(&content) {
-                    (b.system_responsiveness, b.network_throttling_index, b.power_scheme_guid)
-                } else {
-                    (20, 10, "381b4222-f694-41f0-9685-ff5bb260df2e".to_string())
-                }
-            } else {
-                (20, 10, "381b4222-f694-41f0-9685-ff5bb260df2e".to_string())
-            }
-        } else {
-            (20, 10, "381b4222-f694-41f0-9685-ff5bb260df2e".to_string())
-        };
+        if !backup_path.exists() {
+            return Err("No se encontró archivo de respaldo previo (windows_backup.json). Ninguna optimización fue aplicada aún.".to_string());
+        }
+
+        let content = fs::read_to_string(&backup_path)
+            .map_err(|e| format!("Error leyendo archivo de respaldo: {}", e))?;
+        let backup: WindowsBackup = serde_json::from_str(&content)
+            .map_err(|e| format!("Archivo de respaldo corrupto: {}", e))?;
 
         // 3. Reset audiodg.exe CPU affinity to all cores
         reset_audiodg_affinity_to_all_cores();
@@ -130,22 +126,38 @@ pub async fn restore_defaults() -> Result<bool, String> {
             use windows::Win32::UI::Shell::ShellExecuteW;
             use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
 
+            let status_file = std::env::temp_dir().join("audiodash_restore.status");
+            let _ = std::fs::remove_file(&status_file);
+            let status_path_str = status_file.to_string_lossy();
+
             let script = format!(
                 r#"
-                $sysProfile = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
-                if (Test-Path $sysProfile) {{
-                    Set-ItemProperty -Path $sysProfile -Name "SystemResponsiveness" -Value {} -Type DWord -Force
-                    Set-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Value {} -Type DWord -Force
-                }}
+$statusFile = "{status_path_str}"
+try {{
+    $sysProfile = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
+    if (Test-Path $sysProfile) {{
+        Set-ItemProperty -Path $sysProfile -Name "SystemResponsiveness" -Value {sys_resp} -Type DWord -Force
+        Set-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Value {net_throttle} -Type DWord -Force
+    }}
 
-                # Restaurar plan de energia original del usuario
-                powercfg /setactive {}
+    # Restaurar plan de energia original del usuario
+    powercfg /setactive {power_guid} 2>$null
 
-                # Reiniciar servicio de audio para recargar valores
-                Restart-Service -Name audiosrv -Force
+    # Reiniciar servicio de audio para recargar valores
+    Restart-Service -Name audiosrv -Force 2>$null
+
+    Set-Content -Path $statusFile -Value "SUCCESS" -Force
+}} catch {{
+    Set-Content -Path $statusFile -Value ("ERROR: " + $_.Exception.Message) -Force
+}}
                 "#,
-                sys_resp, net_throttle, power_guid
+                status_path_str = status_path_str,
+                sys_resp = backup.system_responsiveness,
+                net_throttle = backup.network_throttling_index,
+                power_guid = backup.power_scheme_guid
             );
+
+            let encoded_command = encode_powershell_script(&script);
 
             let file_wide: Vec<u16> = OsStr::new("powershell.exe")
                 .encode_wide()
@@ -155,7 +167,7 @@ pub async fn restore_defaults() -> Result<bool, String> {
                 .encode_wide()
                 .chain(std::iter::once(0))
                 .collect();
-            let params_wide: Vec<u16> = OsStr::new(&format!("-NoProfile -NonInteractive -WindowStyle Hidden -Command \"{}\"", script))
+            let params_wide: Vec<u16> = OsStr::new(&format!("-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand {}", encoded_command))
                 .encode_wide()
                 .chain(std::iter::once(0))
                 .collect();
@@ -171,8 +183,28 @@ pub async fn restore_defaults() -> Result<bool, String> {
                 )
             };
 
-            let is_success = (instance.0 as isize) > 32;
-            Ok(is_success)
+            let launched = (instance.0 as isize) > 32;
+            if !launched {
+                return Ok(false);
+            }
+
+            for _ in 0..16 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if status_file.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&status_file) {
+                        let clean = content.trim();
+                        if clean == "SUCCESS" {
+                            let _ = std::fs::remove_file(&status_file);
+                            return Ok(true);
+                        } else if clean.starts_with("ERROR") {
+                            let _ = std::fs::remove_file(&status_file);
+                            return Err(clean.to_string());
+                        }
+                    }
+                }
+            }
+
+            Ok(true)
         }
         #[cfg(not(windows))]
         {
@@ -218,7 +250,6 @@ fn reset_audiodg_affinity_to_all_cores() {
                                 false,
                                 entry.th32ProcessID,
                             ) {
-                                // 0xFFFFFFFF (all cores mask)
                                 let _ = SetProcessAffinityMask(handle, usize::MAX);
                                 let _ = CloseHandle(handle);
                             }

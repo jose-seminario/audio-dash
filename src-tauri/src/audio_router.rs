@@ -96,14 +96,14 @@ pub fn get_audio_devices() -> Vec<AudioDeviceInfo> {
     enumerate_audio_devices()
 }
 
-/// Best-effort automatic routing of game process to selected virtual device
+/// Guides and opens Windows per-app volume settings to route the game to the selected virtual device
 #[tauri::command]
 pub async fn route_game_to_virtual_cable(
     process_name: Option<String>,
     device_name: Option<String>,
 ) -> Result<bool, String> {
     tokio::task::spawn_blocking(move || {
-        let target_process = process_name.unwrap_or_else(|| {
+        let _target_process = process_name.unwrap_or_else(|| {
             let scan = crate::window_monitor::scan_game_state_internal();
             if scan.is_game {
                 scan.process_name
@@ -115,19 +115,11 @@ pub async fn route_game_to_virtual_cable(
 
         #[cfg(windows)]
         {
-            let pid = crate::system_tweaks::find_process_id_by_name(&target_process);
-            if pid.is_none() {
-                return Err(format!(
-                    "El juego ('{}') no está en ejecución. Inícialo primero para enrutarlo o configúralo manualmente en Windows.",
-                    target_process
-                ));
-            }
-
-            // Windows 10/11 per-app routing requires App Volume settings access
-            Err(
-                "Windows requiere asignar la salida del juego en las preferencias de volumen de la aplicación. Haz clic en 'Configuración de Windows' para asignarlo a CABLE Input."
-                    .to_string(),
-            )
+            // Abre la página de configuración de Windows donde el usuario asigna la salida del juego
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", "ms-settings:apps-volume"])
+                .spawn();
+            Ok(true)
         }
         #[cfg(not(windows))]
         {

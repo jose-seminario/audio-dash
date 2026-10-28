@@ -1,4 +1,5 @@
 use crate::dependencies::get_appdata_dir;
+use crate::system_audit::encode_powershell_script;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -78,62 +79,93 @@ pub fn get_available_hrtf_profiles() -> Vec<HrtfProfile> {
     get_default_hrtf_profiles()
 }
 
-/// Zero-Config: Downloads HRIR impulse response files to %APPDATA%\AudioDash\hrir\ on end-user machine
+/// Zero-Config: Downloads HRIR impulse response files to %APPDATA%\AudioDash\hrir\ on end-user machine.
+/// Includes strict whitelist validation to prevent path traversal attacks.
 #[tauri::command]
 pub async fn ensure_hrir_installed(filename: String) -> Result<bool, String> {
-    if filename.is_empty() {
+    if filename.trim().is_empty() {
         return Ok(true);
+    }
+
+    // Prevención estricta de Path Traversal
+    let is_whitelisted = get_default_hrtf_profiles()
+        .iter()
+        .any(|p| p.filename == filename);
+
+    if !is_whitelisted || filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+        return Err("Perfil HRTF no autorizado o nombre de archivo sospechoso".to_string());
     }
 
     tokio::task::spawn_blocking(move || {
         let dest_path = get_hrir_profile_path(&filename);
         if dest_path.exists() {
-            return Ok(true);
+            if let Ok(meta) = fs::metadata(&dest_path) {
+                if meta.len() > 10_000 {
+                    return Ok(true);
+                }
+            }
         }
 
         let _ = get_hrir_dir();
+        let part_path = dest_path.with_extension("part");
         let download_url = format!("{}{}", HRIR_BASE_URL, filename);
 
         #[cfg(windows)]
         {
             use std::process::Command;
+            let _ = fs::remove_file(&part_path);
 
-            // 1. Try Windows native curl
+            // 1. Try Windows native curl (-f para fallar en 404, -s, -S, -L)
             let curl_res = Command::new("curl.exe")
+                .arg("-f")
                 .arg("-s")
+                .arg("-S")
                 .arg("-L")
                 .arg("-o")
-                .arg(&dest_path)
+                .arg(&part_path)
                 .arg(&download_url)
                 .output();
 
             if let Ok(out) = curl_res {
-                if out.status.success() && dest_path.exists() {
-                    return Ok(true);
+                if out.status.success() && part_path.exists() {
+                    if let Ok(meta) = fs::metadata(&part_path) {
+                        if meta.len() > 10_000 {
+                            let _ = fs::rename(&part_path, &dest_path);
+                            return Ok(dest_path.exists());
+                        }
+                    }
                 }
             }
 
-            // 2. Fallback to PowerShell Invoke-WebRequest
+            // 2. Fallback to PowerShell Invoke-WebRequest con -EncodedCommand
             let script = format!(
                 "$ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
                 download_url,
-                dest_path.to_string_lossy()
+                part_path.to_string_lossy()
             );
 
+            let encoded = encode_powershell_script(&script);
             let ps_res = Command::new("powershell.exe")
                 .arg("-NoProfile")
                 .arg("-NonInteractive")
                 .arg("-WindowStyle")
                 .arg("Hidden")
-                .arg("-Command")
-                .arg(&script)
+                .arg("-EncodedCommand")
+                .arg(&encoded)
                 .output();
 
             if let Ok(ps_out) = ps_res {
-                if ps_out.status.success() && dest_path.exists() {
-                    return Ok(true);
+                if ps_out.status.success() && part_path.exists() {
+                    if let Ok(meta) = fs::metadata(&part_path) {
+                        if meta.len() > 10_000 {
+                            let _ = fs::rename(&part_path, &dest_path);
+                            return Ok(dest_path.exists());
+                        }
+                    }
                 }
             }
+
+            let _ = fs::remove_file(&part_path);
         }
 
         Ok(dest_path.exists())

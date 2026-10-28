@@ -63,27 +63,45 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
 pub fn check_system_dependencies() -> DependencyStatus {
     ensure_app_directories();
     crate::audio_engine::ensure_apo_config_linked();
+
     let default_apo_path = Path::new(r"C:\Program Files\EqualizerAPO");
     let x86_apo_path = Path::new(r"C:\Program Files (x86)\EqualizerAPO");
 
-    let (installed, found_path) = if default_apo_path.exists() {
-        (true, Some(default_apo_path.to_string_lossy().to_string()))
+    let (installed, found_path, config_file_path) = if default_apo_path.exists() {
+        (
+            true,
+            Some(default_apo_path.to_string_lossy().to_string()),
+            Some(default_apo_path.join("config").join("config.txt")),
+        )
     } else if x86_apo_path.exists() {
-        (true, Some(x86_apo_path.to_string_lossy().to_string()))
+        (
+            true,
+            Some(x86_apo_path.to_string_lossy().to_string()),
+            Some(x86_apo_path.join("config").join("config.txt")),
+        )
     } else {
-        (false, None)
+        (false, None, None)
     };
 
     let settings = load_settings();
 
-    // Check if AudioDash configuration file is linked and exists
-    let user_config_path = crate::audio_engine::get_user_config_path();
-    let config_linked = user_config_path.exists();
-
-    let details = if installed {
-        "Equalizer APO detectado en el sistema.".to_string()
+    // Comprobación real y verídica del enlace en config.txt
+    let config_linked = if let Some(cfg_path) = config_file_path {
+        if let Ok(content) = fs::read_to_string(&cfg_path) {
+            content.contains("AudioDash")
+        } else {
+            false
+        }
     } else {
-        "Equalizer APO no se encuentra en las rutas estándar de Program Files.".to_string()
+        false
+    };
+
+    let details = if installed && config_linked {
+        "Equalizer APO instalado y vinculado correctamente en config.txt.".to_string()
+    } else if installed {
+        "Equalizer APO detectado, pero config.txt requiere ser vinculado con el botón 'Auto-Configurar'.".to_string()
+    } else {
+        "Equalizer APO no está instalado. Usa el botón 'Instalar Equalizer APO' para instalarlo automáticamente.".to_string()
     };
 
     DependencyStatus {
@@ -109,16 +127,12 @@ pub fn add_custom_game_exe(exe_name: String) -> Result<Vec<String>, String> {
     if clean.is_empty() {
         return Err("El nombre del ejecutable no puede estar vacío.".to_string());
     }
-    let exe_with_ext = if clean.ends_with(".exe") {
-        clean
-    } else {
-        format!("{}.exe", clean)
-    };
 
-    if !settings.custom_game_exes.contains(&exe_with_ext) {
-        settings.custom_game_exes.push(exe_with_ext);
+    if !settings.custom_game_exes.contains(&clean) {
+        settings.custom_game_exes.push(clean);
         save_settings(&settings)?;
     }
+
     Ok(settings.custom_game_exes)
 }
 
