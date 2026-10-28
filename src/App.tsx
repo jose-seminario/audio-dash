@@ -305,7 +305,7 @@ export const App: React.FC = () => {
   const isTestModeRef = useRef(isTestMode);
   isTestModeRef.current = isTestMode;
 
-  const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Core synchronization logic to write Equalizer APO config
   const syncEqProfile = useCallback(
