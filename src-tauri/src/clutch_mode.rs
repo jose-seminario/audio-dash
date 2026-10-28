@@ -13,19 +13,17 @@ pub fn is_clutch_active() -> bool {
 #[cfg(windows)]
 fn adjust_discord_volume(target_volume: f32) -> Option<f32> {
     use winmix::WinMix;
-    let winmix = WinMix::default().ok()?;
-    let sessions = winmix.enumerate().ok()?;
+    let winmix = unsafe { WinMix::default() };
+    let sessions = unsafe { winmix.enumerate().ok()? };
     let mut prev_volume = None;
 
     for session in sessions {
-        if let Ok(path) = session.path() {
-            let p = path.to_string_lossy().to_lowercase();
-            if p.contains("discord.exe") {
-                if prev_volume.is_none() {
-                    prev_volume = session.vol.get_master_volume().ok();
-                }
-                let _ = session.vol.set_master_volume(target_volume);
+        let p = session.path.to_lowercase();
+        if p.contains("discord.exe") {
+            if prev_volume.is_none() {
+                prev_volume = unsafe { session.vol.get_master_volume().ok() };
             }
+            let _ = unsafe { session.vol.set_master_volume(target_volume) };
         }
     }
 
