@@ -33,7 +33,7 @@ pub fn is_competitive_game(
         return (false, "ignored_dev_tool");
     }
 
-    // 2. Excluir ejecutables específicos de launchers y herramientas (sin perjudicar juegos con 'steam' en el nombre)
+    // 2. Excluir ejecutables específicos de launchers, navegadores y herramientas (evita falsos positivos por título en YouTube/Twitch)
     let is_launcher = exe == "steam.exe"
         || exe == "steamservice.exe"
         || exe == "steamwebhelper.exe"
@@ -44,6 +44,12 @@ pub fn is_competitive_game(
         || exe == "audiodash.exe"
         || exe == "explorer.exe"
         || exe == "taskmgr.exe"
+        || exe == "chrome.exe"
+        || exe == "msedge.exe"
+        || exe == "firefox.exe"
+        || exe == "brave.exe"
+        || exe == "opera.exe"
+        || exe == "vivaldi.exe"
         || exe.contains("crashhandler")
         || exe.contains("crash_handler")
         || exe.contains("reportcod");

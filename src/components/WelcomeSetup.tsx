@@ -10,7 +10,6 @@ import {
   Shield,
   HelpCircle,
   Zap,
-  Wrench,
   Loader2,
 } from "lucide-react";
 
@@ -94,7 +93,6 @@ export const WelcomeSetup: React.FC<WelcomeSetupProps> = ({
 
   const isApoInstalled = status.equalizer_apo_installed;
   const isApoLinked = status.config_linked;
-  const isFullyReady = isApoInstalled && isApoLinked;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-tactical-900/95 backdrop-blur-md p-4 animate-in fade-in duration-150">

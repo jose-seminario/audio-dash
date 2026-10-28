@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   SliderValues,
   ProfileType,
-  ProfileMode,
   DependencyStatus,
   SystemAuditResult,
   HrtfProfile,
@@ -21,7 +20,6 @@ import {
   RefreshCw,
   Cpu,
   Gamepad2,
-  SlidersHorizontal,
   Info,
   Radio,
   Sparkles,
@@ -31,12 +29,10 @@ import {
   CheckCircle2,
   AlertTriangle,
   RotateCcw,
-  ExternalLink,
   Zap,
   AlertOctagon,
   Layers,
   Headphones,
-  FlaskConical,
   Plus,
 } from "lucide-react";
 
@@ -191,15 +187,32 @@ const DEFAULT_NORMAL_SLIDERS: SliderValues = {
 
 type ActiveTab = "perfil" | "calidad" | "optimizacion";
 
+function loadStoredJson<T>(key: string, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      return { ...fallback, ...JSON.parse(raw) };
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return fallback;
+}
+
+function loadStoredString(key: string, fallback: string): string {
+  try {
+    const val = localStorage.getItem(key);
+    return val !== null ? val : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export const App: React.FC = () => {
   // Navigation Tabs state
   const [activeTab, setActiveTab] = useState<ActiveTab>("perfil");
 
-  // Profiles and active mode state
-  const [profileMode, setProfileMode] = useState<ProfileMode>("auto");
-  const profileModeRef = useRef(profileMode);
-  profileModeRef.current = profileMode;
-
+  // Active profile state
   const [activeProfile, setActiveProfile] = useState<ProfileType>("JUEGOS");
 
   // Real-time Dynamic Game Detection state
@@ -214,26 +227,37 @@ export const App: React.FC = () => {
 
   // Audio Devices & Routing (Warzone Isolation & Test Mode)
   const [audioDevices, setAudioDevices] = useState<AudioDevice[]>([]);
-  const [selectedDevice, setSelectedDevice] = useState<string>("");
+  const [selectedDevice, setSelectedDevice] = useState<string>(() =>
+    loadStoredString("audiodash_device", "")
+  );
   const [isTestMode, setIsTestMode] = useState<boolean>(false);
   const [showCableModal, setShowCableModal] = useState<boolean>(false);
-  const [routingNotice, setRoutingNotice] = useState<string | null>(null);
 
-  // Per-profile slider values
-  const [gameSliders, setGameSliders] = useState<SliderValues>(DEFAULT_GAME_SLIDERS);
-  const [normalSliders, setNormalSliders] = useState<SliderValues>(DEFAULT_NORMAL_SLIDERS);
+  // Per-profile slider values (Persisted in localStorage)
+  const [gameSliders, setGameSliders] = useState<SliderValues>(() =>
+    loadStoredJson("audiodash_game_sliders", DEFAULT_GAME_SLIDERS)
+  );
+  const [normalSliders, setNormalSliders] = useState<SliderValues>(() =>
+    loadStoredJson("audiodash_normal_sliders", DEFAULT_NORMAL_SLIDERS)
+  );
 
-  // Hardware AutoEQ Profile
-  const [selectedHeadphoneId, setSelectedHeadphoneId] = useState<string>("flat");
+  // Hardware AutoEQ Profile (Persisted)
+  const [selectedHeadphoneId, setSelectedHeadphoneId] = useState<string>(() =>
+    loadStoredString("audiodash_headphone", "flat")
+  );
 
-  // HeSuVi HRTF Positional Audio Profile (Audio 3D)
-  const [selectedHrtf, setSelectedHrtf] = useState<string>("sennheiser_gsx.wav");
+  // HeSuVi HRTF Positional Audio Profile (Audio 3D - Persisted)
+  const [selectedHrtf, setSelectedHrtf] = useState<string>(() =>
+    loadStoredString("audiodash_hrtf", "")
+  );
 
   // Clutch Mode state (Hotkeyed via Ctrl+Shift+C)
   const [isClutchActive, setIsClutchActive] = useState<boolean>(false);
 
-  // Distance Aware mode state
-  const [distanceAware, setDistanceAware] = useState<boolean>(false);
+  // Distance Aware mode state (Persisted)
+  const [distanceAware, setDistanceAware] = useState<boolean>(() =>
+    loadStoredString("audiodash_distance_aware", "false") === "true"
+  );
   const distanceAwareRef = useRef(distanceAware);
   distanceAwareRef.current = distanceAware;
 
@@ -366,15 +390,6 @@ export const App: React.FC = () => {
     try {
       const devs = await tauriInvoke<AudioDevice[]>("get_audio_devices");
       setAudioDevices(devs);
-      // Solo seleccionar si el usuario explícitamente lo solicita; de lo contrario dejar estándar global
-      if (devs.length > 0 && !selectedDeviceRef.current) {
-        const preferred = devs.find((d) => d.is_virtual_cable);
-        if (preferred) {
-          const val = preferred.endpoint_name || preferred.name;
-          setSelectedDevice(val);
-          selectedDeviceRef.current = val;
-        }
-      }
     } catch (e) {
       console.warn("No se pudieron cargar dispositivos de audio:", e);
     }
@@ -472,6 +487,11 @@ export const App: React.FC = () => {
   const handleDeviceChange = (dev: string) => {
     setSelectedDevice(dev);
     selectedDeviceRef.current = dev;
+    try {
+      localStorage.setItem("audiodash_device", dev);
+    } catch {
+      // Ignore storage write errors
+    }
     const values =
       activeProfileRef.current === "JUEGOS"
         ? gameSlidersRef.current
@@ -524,36 +544,32 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleAutoRouteGame = async () => {
-    try {
-      await tauriInvoke("route_game_to_virtual_cable");
-      setRoutingNotice("Warzone asignado a CABLE Input exitosamente.");
-      setTimeout(() => setRoutingNotice(null), 6000);
-    } catch (e) {
-      setRoutingNotice(String(e));
-      setTimeout(() => setRoutingNotice(null), 6000);
-    }
-  };
-
   const handleToggleClutch = async () => {
     try {
       const newState = await tauriInvoke<boolean>("toggle_clutch_mode");
-      setIsClutchActive(newState);
-      isClutchActiveRef.current = newState;
-      const currentVals =
-        activeProfileRef.current === "JUEGOS"
-          ? gameSlidersRef.current
-          : normalSlidersRef.current;
-      syncEqProfile(
-        currentVals,
-        activeProfileRef.current,
-        selectedHrtfRef.current,
-        newState,
-        distanceAwareRef.current,
-        selectedDeviceRef.current,
-        isTestModeRef.current
-      );
-      triggerAudioRefresh();
+      const isNativeTauri =
+        typeof window !== "undefined" &&
+        Boolean((window as unknown as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+
+      // En entorno nativo Tauri, el evento 'clutch_mode_toggled' actualiza el estado y el archivo de EQ.
+      if (!isNativeTauri) {
+        setIsClutchActive(newState);
+        isClutchActiveRef.current = newState;
+        const currentVals =
+          activeProfileRef.current === "JUEGOS"
+            ? gameSlidersRef.current
+            : normalSlidersRef.current;
+        syncEqProfile(
+          currentVals,
+          activeProfileRef.current,
+          selectedHrtfRef.current,
+          newState,
+          distanceAwareRef.current,
+          selectedDeviceRef.current,
+          isTestModeRef.current
+        );
+        triggerAudioRefresh();
+      }
     } catch (e) {
       console.error("Error toggling clutch mode:", e);
     }
@@ -563,6 +579,11 @@ export const App: React.FC = () => {
     const nextVal = !distanceAware;
     setDistanceAware(nextVal);
     distanceAwareRef.current = nextVal;
+    try {
+      localStorage.setItem("audiodash_distance_aware", String(nextVal));
+    } catch {
+      // Ignore storage write errors
+    }
     const values =
       activeProfileRef.current === "JUEGOS"
         ? gameSlidersRef.current
@@ -700,8 +721,8 @@ export const App: React.FC = () => {
             setIsGameActive(res.is_game);
             setGameMatchDetail(res.matched_by);
 
-            // Si se detecta un juego y estamos en modo auto, conmutar a perfil JUEGOS
-            if (profileModeRef.current === "auto" && res.is_game) {
+            // Si se detecta un juego, conmutar automáticamente al perfil JUEGOS
+            if (res.is_game && activeProfileRef.current !== "JUEGOS") {
               setActiveProfile("JUEGOS");
               activeProfileRef.current = "JUEGOS";
               syncEqProfile(
@@ -730,12 +751,17 @@ export const App: React.FC = () => {
     };
   }, [syncEqProfile, triggerAudioRefresh]);
 
-  // Debounced slider handler with complete parameter propagation
+  // Debounced slider handler with complete parameter propagation & localStorage persistence
   const handleSliderChange = (key: keyof SliderValues, val: number) => {
     if (activeProfile === "JUEGOS") {
       const updated = { ...gameSliders, [key]: val };
       setGameSliders(updated);
       gameSlidersRef.current = updated;
+      try {
+        localStorage.setItem("audiodash_game_sliders", JSON.stringify(updated));
+      } catch {
+        // Ignore storage write errors
+      }
 
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = setTimeout(async () => {
@@ -754,6 +780,11 @@ export const App: React.FC = () => {
       const updated = { ...normalSliders, [key]: val };
       setNormalSliders(updated);
       normalSlidersRef.current = updated;
+      try {
+        localStorage.setItem("audiodash_normal_sliders", JSON.stringify(updated));
+      } catch {
+        // Ignore storage write errors
+      }
 
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = setTimeout(async () => {
@@ -795,6 +826,11 @@ export const App: React.FC = () => {
   const handleHeadphoneChange = (id: string) => {
     setSelectedHeadphoneId(id);
     selectedHeadphoneIdRef.current = id;
+    try {
+      localStorage.setItem("audiodash_headphone", id);
+    } catch {
+      // Ignore storage write errors
+    }
     const values =
       activeProfileRef.current === "JUEGOS"
         ? gameSlidersRef.current
@@ -814,6 +850,11 @@ export const App: React.FC = () => {
   const handleHrtfChange = (filename: string) => {
     setSelectedHrtf(filename);
     selectedHrtfRef.current = filename;
+    try {
+      localStorage.setItem("audiodash_hrtf", filename);
+    } catch {
+      // Ignore storage write errors
+    }
     if (filename) {
       tauriInvoke("ensure_hrir_installed", { filename }).catch(() => {});
     }
@@ -1277,6 +1318,7 @@ export const App: React.FC = () => {
                 values={activeSliders}
                 onChange={handleSliderChange}
                 onRelease={handleSliderRelease}
+                isNormalProfile={activeProfile === "NORMAL"}
               />
             </div>
           </div>
@@ -1305,7 +1347,7 @@ export const App: React.FC = () => {
 
               <HeadphoneSearch
                 selectedId={selectedHeadphoneId}
-                onSelectHeadphone={handleHeadphoneChange}
+                onSelect={handleHeadphoneChange}
               />
             </div>
 
@@ -1383,17 +1425,29 @@ export const App: React.FC = () => {
                 </button>
               </div>
 
-              <div className="flex items-center justify-between p-3 rounded-lg bg-tactical-900 border border-tactical-750">
-                <div className="space-y-0.5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 rounded-lg bg-tactical-900 border border-tactical-750">
+                <div className="space-y-1 flex-1">
                   <span className="text-xs font-bold font-mono text-slate-200 block">
                     Dispositivo Activo para Filtros:
                   </span>
-                  <span className="text-xs text-slate-400 font-mono">
-                    {selectedDevice || "Todos los Dispositivos (Estándar Global)"}
-                  </span>
+                  <select
+                    value={selectedDevice}
+                    onChange={(e) => handleDeviceChange(e.target.value)}
+                    className="w-full sm:max-w-xs px-2.5 py-1.5 rounded bg-tactical-850 border border-tactical-600 text-xs font-mono text-slate-200 focus:outline-none focus:border-tactical-accent"
+                  >
+                    <option value="">Todos los Dispositivos (Estándar Global)</option>
+                    {audioDevices.map((dev) => {
+                      const val = dev.endpoint_name || dev.name;
+                      return (
+                        <option key={dev.id} value={val}>
+                          {dev.name}
+                        </option>
+                      );
+                    })}
+                  </select>
                 </div>
 
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2 shrink-0">
                   <button
                     onClick={handleToggleTestMode}
                     className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-bold transition-all ${
@@ -1655,7 +1709,14 @@ export const App: React.FC = () => {
         <WelcomeSetup
           status={dependencyStatus}
           onRescan={checkDependencies}
-          onCompleteFirstRun={() => setShowWelcome(false)}
+          onCompleteFirstRun={async () => {
+            try {
+              await tauriInvoke("mark_first_run_completed");
+            } catch (e) {
+              console.warn("No se pudo marcar first_run_completed:", e);
+            }
+            setShowWelcome(false);
+          }}
           onOpenDownloadUrl={() => {
             if (typeof window !== "undefined") {
               window.open("https://sourceforge.net/projects/equalizerapo/", "_blank");

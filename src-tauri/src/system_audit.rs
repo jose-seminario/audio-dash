@@ -60,33 +60,31 @@ fn get_status_file_path(operation_name: &str) -> PathBuf {
 
 #[tauri::command]
 pub fn audit_system() -> SystemAuditResult {
-    // Asegurar backup inicial del estado de fábrica
-    let _ = crate::backup_system::create_backup_if_not_exists();
-
     let mut checks = Vec::new();
     let mut all_optimal = true;
 
-    // 1. Audio Enhancements Check (Mejoras de Audio)
-    let enhancements_disabled = check_audio_enhancements_registry();
-    if !enhancements_disabled {
+    // 1. Audio Processing Objects (APO / SysFx) Check
+    // Equalizer APO requiere que el procesamiento APO de Windows NO esté bloqueado (Disable_SysFx != 1)
+    let apo_processing_enabled = check_audio_enhancements_registry();
+    if !apo_processing_enabled {
         all_optimal = false;
         checks.push(AuditCheckItem {
             id: "audio_enhancements".to_string(),
-            name: "Mejoras de Audio de Windows".to_string(),
+            name: "Procesamiento APO de Windows".to_string(),
             status: "warning".to_string(),
-            current_value: "Habilitadas (Distorsión y latencia)".to_string(),
-            recommended: "Desactivadas".to_string(),
-            description: "Las mejoras de Windows agregan compresión y latencia en tiempo real."
+            current_value: "Bloqueado (Desactiva Equalizer APO)".to_string(),
+            recommended: "Habilitado (Motor APO Activo)".to_string(),
+            description: "Si Windows desactiva las mejoras de audio (Disable_SysFx = 1), Equalizer APO queda apagado y las perillas no surten efecto."
                 .to_string(),
         });
     } else {
         checks.push(AuditCheckItem {
             id: "audio_enhancements".to_string(),
-            name: "Mejoras de Audio de Windows".to_string(),
+            name: "Procesamiento APO de Windows".to_string(),
             status: "optimal".to_string(),
-            current_value: "Desactivadas (Audio Puro)".to_string(),
-            recommended: "Desactivadas".to_string(),
-            description: "Procesamiento directo sin búferes innecesarios.".to_string(),
+            current_value: "Habilitado (Motor APO Activo)".to_string(),
+            recommended: "Habilitado".to_string(),
+            description: "Canal de procesamiento abierto para que Equalizer APO aplique los filtros en tiempo real.".to_string(),
         });
     }
 
@@ -193,7 +191,7 @@ pub fn audit_system() -> SystemAuditResult {
     }
 }
 
-/// Checks if Windows Audio Enhancements are disabled in active render devices
+/// Checks that Windows Audio Processing Objects (SysFx / Equalizer APO) are NOT blocked (`Disable_SysFx != 1`)
 fn check_audio_enhancements_registry() -> bool {
     #[cfg(windows)]
     {
@@ -214,16 +212,17 @@ fn check_audio_enhancements_registry() -> bool {
                     let fx_path = format!("{}\\FxProperties", dev_path);
                     if let Ok(fx_key) = hklm.open_subkey(&fx_path) {
                         // PKEY_AudioEndpoint_Disable_SysFx = {1da5d803-d01f-4704-978c-5ed0b9d846e6},5
+                        // Si es 1, Windows está bloqueando Equalizer APO en este dispositivo activo
                         if let Ok(disabled) = fx_key.get_value::<u32, _>("{1da5d803-d01f-4704-978c-5ed0b9d846e6},5") {
                             if disabled == 1 {
-                                return true;
+                                return false;
                             }
                         }
                     }
                 }
             }
         }
-        false
+        true
     }
     #[cfg(not(windows))]
     {
@@ -268,7 +267,7 @@ fn check_spatial_sound_real() -> (bool, String) {
     }
 }
 
-/// Inspects Windows audio endpoints to extract sample rate and bit depth from active device
+/// Inspects Windows audio endpoints to extract sample rate and bit depth from active physical devices
 fn check_audio_sample_rate_and_depth() -> (bool, String) {
     #[cfg(windows)]
     {
@@ -276,6 +275,7 @@ fn check_audio_sample_rate_and_depth() -> (bool, String) {
         use winreg::RegKey;
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
         let render_path = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render";
+        let mut fallback_desc: Option<(bool, String)> = None;
 
         if let Ok(render_key) = hklm.open_subkey(render_path) {
             for subkey_name in render_key.enum_keys().filter_map(|k| k.ok()) {
@@ -288,6 +288,12 @@ fn check_audio_sample_rate_and_depth() -> (bool, String) {
 
                     let prop_path = format!("{}\\Properties", dev_path);
                     if let Ok(prop_key) = hklm.open_subkey(&prop_path) {
+                        let adapter_name: String = prop_key
+                            .get_value("{b3f8fa53-0004-438e-9003-51a46e139bfc},6")
+                            .unwrap_or_default()
+                            .to_lowercase();
+                        let is_virtual = adapter_name.contains("vb-audio") || adapter_name.contains("cable");
+
                         if let Ok(bytes) = prop_key.get_raw_value("{a45c254e-df1c-4efd-8020-67d146a850e0},0") {
                             if bytes.bytes.len() >= 40 {
                                 let sample_rate = u32::from_le_bytes([
@@ -304,7 +310,12 @@ fn check_audio_sample_rate_and_depth() -> (bool, String) {
                                 if sample_rate > 0 && bits_per_sample > 0 {
                                     let is_optimal = sample_rate == 48000 && bits_per_sample == 24;
                                     let desc = format!("{} bits, {} Hz", bits_per_sample, sample_rate);
-                                    return (is_optimal, desc);
+                                    if is_optimal && !is_virtual {
+                                        return (true, desc);
+                                    }
+                                    if fallback_desc.is_none() || !is_virtual {
+                                        fallback_desc = Some((is_optimal, desc));
+                                    }
                                 }
                             }
                         }
@@ -312,7 +323,7 @@ fn check_audio_sample_rate_and_depth() -> (bool, String) {
                 }
             }
         }
-        (true, "24 bits, 48000 Hz".to_string())
+        fallback_desc.unwrap_or((true, "24 bits, 48000 Hz".to_string()))
     }
     #[cfg(not(windows))]
     {
@@ -323,8 +334,20 @@ fn check_audio_sample_rate_and_depth() -> (bool, String) {
 fn check_power_plan() -> bool {
     #[cfg(windows)]
     {
-        let guid = crate::backup_system::get_current_power_scheme().to_lowercase();
-        guid.contains("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c") || guid.contains("e9a42b02-d5df-448d-aa00-03f14749eb61")
+        use std::process::Command;
+        if let Ok(output) = Command::new("powercfg").arg("/getactivescheme").output() {
+            let text = String::from_utf8_lossy(&output.stdout).to_lowercase();
+            if text.contains("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c")
+                || text.contains("e9a42b02-d5df-448d-aa00-03f14749eb61")
+                || text.contains("high performance")
+                || text.contains("alto rendimiento")
+                || text.contains("ultimate")
+                || text.contains("máximo rendimiento")
+            {
+                return true;
+            }
+        }
+        false
     }
     #[cfg(not(windows))]
     {
@@ -421,11 +444,27 @@ pub async fn request_system_optimization() -> Result<bool, String> {
             let script = format!(r#"
 $statusFile = "{status_path_str}"
 try {{
-    # 1. Duplicar plan de Alto Rendimiento si no existe en laptops modernas y activarlo
-    powercfg -duplicatescheme 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
+    # 1. Activar Plan de Alto Rendimiento (compatible con laptops Modern Standby)
     powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
+    if ($LASTEXITCODE -ne 0) {{
+        $dupOut = powercfg -duplicatescheme 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
+        if ($dupOut -match "([0-9a-fA-F]{{8}}-([0-9a-fA-F]{{4}}-){{3}}[0-9a-fA-F]{{12}})") {{
+            powercfg /setactive $matches[1] 2>$null
+        }}
+    }}
 
-    # 2. Otorgar permisos NTFS completos al usuario en la carpeta de Equalizer APO
+    # 2. Desbloquear el motor APO en dispositivos activos (Disable_SysFx = 0)
+    $renderPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
+    if (Test-Path $renderPath) {{
+        Get-ChildItem $renderPath | ForEach-Object {{
+            $fxPath = Join-Path $_.PSPath "FxProperties"
+            if (Test-Path $fxPath) {{
+                Set-ItemProperty -Path $fxPath -Name "{{1da5d803-d01f-4704-978c-5ed0b9d846e6}},5" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            }}
+        }}
+    }}
+
+    # 3. Otorgar permisos NTFS completos al usuario en la carpeta de Equalizer APO
     # Permite a Audio Dash escribir los filtros en tiempo real sin requerir permisos de admin
     $apoDirs = @("C:\Program Files\EqualizerAPO\config", "C:\Program Files (x86)\EqualizerAPO\config")
     foreach ($dir in $apoDirs) {{
@@ -447,14 +486,14 @@ try {{
         }}
     }}
 
-    # 3. MMCSS Tweaks (SystemResponsiveness = 0 y NetworkThrottlingIndex = 0xFFFFFFFF)
+    # 4. MMCSS Tweaks (SystemResponsiveness = 0 y NetworkThrottlingIndex = 0xFFFFFFFF)
     $sysProfile = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
     if (Test-Path $sysProfile) {{
         Set-ItemProperty -Path $sysProfile -Name "SystemResponsiveness" -Value 0 -Type DWord -Force
         Set-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Value 0xFFFFFFFF -Type DWord -Force
     }}
 
-    # 4. Asignacion de prioridad alta a la tarea Games en MMCSS
+    # 5. Asignacion de prioridad alta a la tarea Games en MMCSS
     $gamesTask = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games"
     if (Test-Path $gamesTask) {{
         Set-ItemProperty -Path $gamesTask -Name "GPU Priority" -Value 8 -Type DWord -Force
@@ -462,7 +501,7 @@ try {{
         Set-ItemProperty -Path $gamesTask -Name "Scheduling Category" -Value "High" -Type String -Force
     }}
 
-    # 5. Reiniciar audiosrv para aplicar configuraciones limpiamente
+    # 6. Reiniciar audiosrv para aplicar configuraciones limpiamente
     Restart-Service -Name audiosrv -Force 2>$null
 
     Set-Content -Path $statusFile -Value "SUCCESS" -Force
@@ -502,8 +541,8 @@ try {{
                 return Ok(false); // UAC denied or cancelled
             }
 
-            // Poll for status file up to 8 seconds
-            for _ in 0..16 {
+            // Poll for status file up to 30 seconds (60 * 500ms)
+            for _ in 0..60 {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if status_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&status_file) {
@@ -519,7 +558,7 @@ try {{
                 }
             }
 
-            Ok(true)
+            Ok(false)
         }
         #[cfg(not(windows))]
         {
@@ -597,7 +636,7 @@ try {{
                 return Ok(false);
             }
 
-            for _ in 0..16 {
+            for _ in 0..60 {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if status_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&status_file) {
@@ -613,7 +652,7 @@ try {{
                 }
             }
 
-            Ok(true)
+            Ok(false)
         }
         #[cfg(not(windows))]
         {

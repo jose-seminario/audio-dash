@@ -6,8 +6,6 @@ import {
   Plus,
   CheckCircle2,
   RefreshCw,
-  Sparkles,
-  ShieldAlert,
 } from "lucide-react";
 
 interface CustomGameModalProps {

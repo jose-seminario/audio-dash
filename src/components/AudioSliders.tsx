@@ -17,6 +17,7 @@ interface AudioSlidersProps {
   onChange: (key: keyof SliderValues, val: number) => void;
   onRelease: () => void;
   disabled?: boolean;
+  isNormalProfile?: boolean;
 }
 
 const COMPETITIVE_DEFAULTS: Record<keyof SliderValues, number> = {
@@ -29,11 +30,22 @@ const COMPETITIVE_DEFAULTS: Record<keyof SliderValues, number> = {
   maestro: 0.0,
 };
 
+const NORMAL_DEFAULTS: Record<keyof SliderValues, number> = {
+  compresion: 0,
+  atenuacionPropia: 0,
+  pasos: 0,
+  bombas: 0,
+  disparos: 0,
+  claridad: 0,
+  maestro: 0,
+};
+
 export const AudioSliders: React.FC<AudioSlidersProps> = ({
   values,
   onChange,
   onRelease,
   disabled = false,
+  isNormalProfile = false,
 }) => {
   const [activeTooltip, setActiveTooltip] = useState<string | null>(null);
 
@@ -153,9 +165,8 @@ export const AudioSliders: React.FC<AudioSlidersProps> = ({
 
   const handleReset = (key: keyof SliderValues) => {
     if (disabled) return;
-    const defaultVal = COMPETITIVE_DEFAULTS[key];
+    const defaultVal = isNormalProfile ? NORMAL_DEFAULTS[key] : COMPETITIVE_DEFAULTS[key];
     onChange(key, defaultVal);
-    setTimeout(() => onRelease(), 50);
   };
 
   return (

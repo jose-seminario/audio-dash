@@ -129,7 +129,8 @@ pub fn generate_apo_config(
                 && !dev_clean.eq_ignore_ascii_case("Dispositivo Estándar")
                 && !dev_clean.eq_ignore_ascii_case("Todos los Dispositivos")
             {
-                config.push_str(&format!("Device: \"{}\"\n\n", dev_clean));
+                // En Equalizer APO, Device: no lleva comillas dobles
+                config.push_str(&format!("Device: {}\n\n", dev_clean));
             }
         }
     } else {
@@ -144,12 +145,15 @@ pub fn generate_apo_config(
             config.push_str(filter);
             config.push('\n');
 
-            // Analizar posibles picos de ganancia positiva en los filtros de AutoEQ para sumarlos al anti-clipping
-            if let Some(pos) = filter.find("Gain +") {
-                let rest = &filter[pos + 6..];
+            // Analizar pico máximo de ganancia positiva en los filtros de AutoEQ (con o sin signo '+')
+            if let Some(pos) = filter.find("Gain ") {
+                let rest = filter[pos + 5..].trim_start();
                 if let Some(space_idx) = rest.find(' ') {
-                    if let Ok(gain_val) = rest[..space_idx].parse::<f32>() {
-                        autoeq_boost += gain_val.max(0.0);
+                    let num_str = rest[..space_idx].trim_start_matches('+');
+                    if let Ok(gain_val) = num_str.parse::<f32>() {
+                        if gain_val > autoeq_boost {
+                            autoeq_boost = gain_val;
+                        }
                     }
                 }
             }
@@ -164,60 +168,52 @@ pub fn generate_apo_config(
         config.push_str("Stage: pre-mix\n");
         config.push_str("Channel: C\n");
         config.push_str(&format!("Preamp: {:.1} dB\n", att_db));
-        config.push_str("Channel: all\n\n");
+        config.push_str("Channel: all\n");
+        config.push_str("Stage: post-mix\n\n");
     }
 
-    // FASE 3: Compresor Dinámico VST (LoudMax con Ataque Conservado o Distance Aware)
+    // FASE 3: Compresor / Nivelador Dinámico de Pasos y Disparos
     let comp_ratio = (values.compresion / 100.0).clamp(0.0, 1.0);
     let mut vst_makeup_gain = 0.0f32;
 
     if comp_ratio > 0.02 {
         let vst_path = get_vst_plugin_path();
-        vst_makeup_gain = comp_ratio * (if distance_aware { 2.5 } else { 4.5 });
+        vst_makeup_gain = comp_ratio * (if distance_aware { 3.0 } else { 5.0 });
 
-        config.push_str("# --- FASE 2: COMPRESION DINAMICA VST ---\n");
+        config.push_str("# --- FASE 2: NIVELADOR DINAMICO DE PASOS Y LIMITADOR VST ---\n");
+        // Ganancia de presencia psicoacústica (levanta pasos débiles proporcional al slider)
+        let presence_q = if distance_aware { 0.85 } else { 0.65 };
+        config.push_str(&format!(
+            "Filter: ON PK Fc 2200 Hz Gain +{:.2} dB Q {:.2}\n",
+            vst_makeup_gain, presence_q
+        ));
         if vst_path.exists() {
-            if distance_aware {
-                // Modo Distancia ON: Compresión suave (-12 dB, Ceiling -1 dB, Atk 15ms, Rel 100ms)
-                config.push_str(&format!(
-                    "VSTPlugin: Library \"{}\" -12.0 -1.0 15.0 100.0\n",
-                    vst_path.to_string_lossy()
-                ));
-            } else {
-                // Modo Distancia OFF: Compresión agresiva (-24 dB, Ceiling -1 dB, Atk 12ms, Rel 80ms)
-                config.push_str(&format!(
-                    "VSTPlugin: Library \"{}\" -24.0 -1.0 12.0 80.0\n",
-                    vst_path.to_string_lossy()
-                ));
-            }
-        } else {
-            config.push_str(
-                "# LoudMax VST no detectado - Compensacion de ganancia nativa activa:\n",
-            );
+            // Limitador Brickwall VST (LoudMax64) para techo seguro a 0 dB
             config.push_str(&format!(
-                "Filter: ON PK Fc 2500 Hz Gain +{:.2} dB Q 0.70\n",
-                vst_makeup_gain
+                "VSTPlugin: Library \"{}\"\n",
+                vst_path.to_string_lossy()
             ));
         }
         config.push('\n');
     }
 
-    // FASE 4: Controles de Ingeniería Perceptual con Preamp Dinámico Anti-Clipping Integral
+    // FASE 4: Controles de Ingeniería Perceptual con Preamp Dinámico Anti-Clipping Calibrado
     config.push_str("# --- FASE 3: CURVA TACTICA PERCEPTUAL & PREAMP ANTI-CLIPPING ---\n");
 
     let pasos_ratio = (values.pasos / 10.0).clamp(0.0, 1.0);
-    let gain_pasos = if pasos_ratio > 0.05 { (3.5 * pasos_ratio) + (2.5 * pasos_ratio) } else { 0.0 };
+    // Tomamos el pico dominante en 2500 Hz (3.5 dB max) sin duplicar bandas no solapadas
+    let peak_pasos = if pasos_ratio > 0.05 { 3.5 * pasos_ratio } else { 0.0 };
 
     let claridad_ratio = (values.claridad / 10.0).clamp(0.0, 1.0);
-    let gain_claridad = if claridad_ratio > 0.05 { 2.0 * claridad_ratio } else { 0.0 };
+    let peak_claridad = if claridad_ratio > 0.05 { 2.0 * claridad_ratio * 0.35 } else { 0.0 };
 
-    let gain_clutch = if is_clutch { 8.0 + 4.0 } else { 0.0 };
+    let peak_clutch = if is_clutch { 6.0 } else { 0.0 };
 
-    // Anti-clipping riguroso: suma de picos + make-up gain + boosts AutoEQ + margen de seguridad (1.5 dB)
-    let total_boost = gain_pasos + gain_claridad + gain_clutch + (vst_makeup_gain * 0.5) + autoeq_boost.min(6.0);
-    let dynamic_anti_clip = -(total_boost + 1.5);
+    // Anti-clipping calibrado: compensa el pico real sin hundir el volumen general del juego
+    let max_peak_boost = peak_pasos + peak_claridad + peak_clutch + (vst_makeup_gain * 0.55) + autoeq_boost.min(4.5);
+    let dynamic_anti_clip = -(max_peak_boost + 0.5);
     let maestro_offset = values.maestro.clamp(-12.0, 0.0);
-    let final_preamp = (dynamic_anti_clip + maestro_offset).clamp(-30.0, 0.0);
+    let final_preamp = (dynamic_anti_clip + maestro_offset).clamp(-20.0, 0.0);
 
     config.push_str(&format!("Preamp: {:.1} dB\n", final_preamp));
 
@@ -274,9 +270,9 @@ pub fn generate_apo_config(
 
     // MODO CLUTCH HIPER-ENFOQUE
     if is_clutch {
-        config.push_str("\n# --- MODO CLUTCH HIPER-ENFOQUE ACTIVO (+8.0 dB EN 2.5 kHz) ---\n");
-        config.push_str("Filter: ON PK Fc 2500 Hz Gain +8.00 dB Q 1.50\n");
-        config.push_str("Filter: ON PK Fc 4000 Hz Gain +4.00 dB Q 1.20\n");
+        config.push_str("\n# --- MODO CLUTCH HIPER-ENFOQUE ACTIVO (+6.0 dB EN 2.5 kHz) ---\n");
+        config.push_str("Filter: ON PK Fc 2500 Hz Gain +6.00 dB Q 1.40\n");
+        config.push_str("Filter: ON PK Fc 4000 Hz Gain +3.50 dB Q 1.20\n");
     }
 
     // FASE 5: Virtualización Espacial HRTF / HeSuVi

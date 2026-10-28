@@ -45,9 +45,10 @@ jobs:
           releaseName: 'Audio Dash v__VERSION__'
           releaseBody: |
             ## Audio Dash v__VERSION__ - Windows 11 Tactical Audio Optimizer
-            - Motor Equalizer APO con configuración directa en `C:\Program Files\EqualizerAPO\config\AudioDash.txt` (sin problemas de permisos).
-            - Detección de ventana nativa Win32 (0.0% CPU).
-            - Permisos estándar anti-cheat friendly con elevación UAC bajo demanda.
+            - Instalación automática de Equalizer APO en 1-Clic y auto-configuración de permisos NTFS (`icacls`) con `-EncodedCommand`.
+            - Motor acústico calibrado con Nivelador de Pasos, atenuación de canal central (`Pre-Mix` / `Post-Mix`) y anti-clipping dinámico.
+            - Detección inteligente anti-actualizaciones para Call of Duty / Warzone + selector de ejecutables personalizados.
+            - Persistencia automática de perfiles, auriculares AutoEQ y modo Clutch (`Ctrl+Shift+C`).
             - Descarga el instalador `.exe` o `.msi` abajo.
           releaseDraft: false
           prerelease: false

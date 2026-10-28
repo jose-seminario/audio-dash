@@ -63,7 +63,17 @@ pub fn create_backup_if_not_exists() -> Result<(), String> {
         }
     }
 
-    let power_guid = get_current_power_scheme();
+    // Si los valores leídos ya son los optimizados por Audio Dash, guardar los valores de fábrica de Windows
+    if sys_resp == 0 && net_throttle == 0xFFFFFFFF {
+        sys_resp = 20;
+        net_throttle = 10;
+    }
+
+    let mut power_guid = get_current_power_scheme();
+    if power_guid.eq_ignore_ascii_case("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c") {
+        // Respaldar el plan Equilibrado estándar de fábrica si ya estaba en Alto Rendimiento
+        power_guid = "381b4222-f694-41f0-9685-ff5bb260df2e".to_string();
+    }
     let now_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -188,7 +198,7 @@ try {{
                 return Ok(false);
             }
 
-            for _ in 0..16 {
+            for _ in 0..60 {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 if status_file.exists() {
                     if let Ok(content) = std::fs::read_to_string(&status_file) {
@@ -204,7 +214,7 @@ try {{
                 }
             }
 
-            Ok(true)
+            Ok(false)
         }
         #[cfg(not(windows))]
         {
