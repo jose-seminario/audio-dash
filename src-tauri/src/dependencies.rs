@@ -60,6 +60,7 @@ pub fn save_settings(settings: &AppSettings) -> Result<(), String> {
 #[tauri::command]
 pub fn check_system_dependencies() -> DependencyStatus {
     ensure_app_directories();
+    crate::audio_engine::ensure_apo_config_linked();
     let default_apo_path = Path::new(r"C:\Program Files\EqualizerAPO");
     let x86_apo_path = Path::new(r"C:\Program Files (x86)\EqualizerAPO");
 
@@ -73,8 +74,8 @@ pub fn check_system_dependencies() -> DependencyStatus {
 
     let settings = load_settings();
 
-    // Check if %APPDATA%\AudioDash\config.txt exists
-    let user_config_path = get_appdata_dir().join("config.txt");
+    // Check if AudioDash configuration file is linked and exists
+    let user_config_path = crate::audio_engine::get_user_config_path();
     let config_linked = user_config_path.exists();
 
     let details = if installed {

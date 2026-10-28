@@ -352,12 +352,21 @@ pub async fn request_system_optimization() -> Result<bool, String> {
                 # 1. Plan de energia de Alto Rendimiento
                 powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
 
-                # 2. Vinculacion de config en Equalizer APO
-                $apoPath = "C:\Program Files\EqualizerAPO\config\config.txt"
-                $appDataPath = [System.Environment]::GetFolderPath('ApplicationData') + '\AudioDash\config.txt'
-                if (Test-Path "C:\Program Files\EqualizerAPO\config") {
-                    if (!(Test-Path $apoPath) -or !(Get-Content $apoPath -ErrorAction SilentlyContinue | Select-String -Pattern "AudioDash")) {
-                        Add-Content -Path $apoPath -Value "`nInclude: `"$appDataPath`"" -Force
+                # 2. Vinculacion de config en Equalizer APO (Ruta directa sin problemas de permisos)
+                $apoDir = "C:\Program Files\EqualizerAPO\config"
+                $apoPath = "$apoDir\config.txt"
+                $includeLine = "Include: C:\Program Files\EqualizerAPO\config\AudioDash.txt"
+                if (Test-Path $apoDir) {
+                    if (Test-Path $apoPath) {
+                        $content = Get-Content $apoPath -Raw -ErrorAction SilentlyContinue
+                        if ($content -match "Include:.*AudioDash") {
+                            $newContent = $content -replace "Include:.*AudioDash.*", $includeLine
+                            Set-Content -Path $apoPath -Value $newContent -Force
+                        } else {
+                            Add-Content -Path $apoPath -Value "`r`n$includeLine" -Force
+                        }
+                    } else {
+                        Set-Content -Path $apoPath -Value $includeLine -Force
                     }
                 }
 

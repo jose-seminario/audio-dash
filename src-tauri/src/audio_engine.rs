@@ -20,7 +20,67 @@ pub struct SliderValues {
 }
 
 pub fn get_user_config_path() -> PathBuf {
-    get_appdata_dir().join("config.txt")
+    use std::path::Path;
+    let default_apo = Path::new(r"C:\Program Files\EqualizerAPO");
+    let x86_apo = Path::new(r"C:\Program Files (x86)\EqualizerAPO");
+
+    if default_apo.exists() {
+        let config_dir = default_apo.join("config");
+        let _ = fs::create_dir_all(&config_dir);
+        config_dir.join("AudioDash.txt")
+    } else if x86_apo.exists() {
+        let config_dir = x86_apo.join("config");
+        let _ = fs::create_dir_all(&config_dir);
+        config_dir.join("AudioDash.txt")
+    } else {
+        get_appdata_dir().join("AudioDash.txt")
+    }
+}
+
+/// Ensures Equalizer APO's main config.txt includes AudioDash.txt
+pub fn ensure_apo_config_linked() {
+    let target_path = get_user_config_path();
+    let target_str = target_path.to_string_lossy();
+
+    let parent_dir = match target_path.parent() {
+        Some(p) => p,
+        None => return,
+    };
+
+    let main_config = parent_dir.join("config.txt");
+    let expected_include = format!("Include: {}", target_str);
+
+    if main_config.exists() {
+        if let Ok(content) = fs::read_to_string(&main_config) {
+            // If already included, no action needed
+            if content.contains(&expected_include) {
+                return;
+            }
+
+            // Replace any old AudioDash Include line (e.g. from AppData) or append
+            let mut lines: Vec<String> = Vec::new();
+            let mut replaced = false;
+
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.starts_with("Include:") && trimmed.contains("AudioDash") {
+                    lines.push(expected_include.clone());
+                    replaced = true;
+                } else {
+                    lines.push(line.to_string());
+                }
+            }
+
+            if !replaced {
+                lines.push(expected_include);
+            }
+
+            let new_content = lines.join("\r\n") + "\r\n";
+            let _ = fs::write(&main_config, new_content.as_bytes());
+        }
+    } else if target_path.starts_with(r"C:\Program Files") {
+        let _ = fs::write(&main_config, format!("{}\r\n", expected_include).as_bytes());
+    }
 }
 
 pub fn get_plugins_dir() -> PathBuf {
@@ -47,7 +107,7 @@ pub fn generate_apo_config(
 ) -> String {
     let mut config = String::new();
     config.push_str("# ========================================================\n");
-    config.push_str("# Audio Dash v1.3.0 - Tactical Windows 11 Audio Optimizer\n");
+    config.push_str("# Audio Dash v1.4.0 - Tactical Windows 11 Audio Optimizer\n");
     config.push_str(&format!("# Active Profile: {}\n", profile));
     config.push_str("# ========================================================\n\n");
 
@@ -231,22 +291,35 @@ pub fn update_eq_profile(
         distance_aware_active,
     );
 
-    {
+    if let Some(parent) = config_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    let write_result = (|| -> Result<(), std::io::Error> {
         let mut tmp_file = OpenOptions::new()
             .create(true)
             .write(true)
             .truncate(true)
-            .open(&tmp_path)
-            .map_err(|e| format!("No se pudo crear archivo temporal: {}", e))?;
+            .open(&tmp_path)?;
 
-        tmp_file
-            .write_all(content.as_bytes())
-            .map_err(|e| format!("Error escribiendo archivo temporal: {}", e))?;
-        tmp_file.flush().map_err(|e| e.to_string())?;
+        tmp_file.write_all(content.as_bytes())?;
+        tmp_file.flush()?;
+        drop(tmp_file);
+
+        if fs::rename(&tmp_path, &config_path).is_err() {
+            fs::write(&config_path, content.as_bytes())?;
+            let _ = fs::remove_file(&tmp_path);
+        }
+        Ok(())
+    })();
+
+    if let Err(_) = write_result {
+        fs::write(&config_path, content.as_bytes())
+            .map_err(|err| format!("Error escribiendo archivo de configuración: {}", err))?;
     }
 
-    fs::rename(&tmp_path, &config_path)
-        .map_err(|e| format!("Error en reemplazo atómico del archivo de configuración: {}", e))?;
+    // Asegurar que el config.txt principal de Equalizer APO incluya AudioDash.txt
+    ensure_apo_config_linked();
 
     Ok(())
 }
