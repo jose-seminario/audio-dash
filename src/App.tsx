@@ -535,9 +535,9 @@ export const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-tactical-900 text-slate-100 flex flex-col font-sans select-none">
+    <div className="h-screen max-h-screen bg-tactical-900 text-slate-100 flex flex-col font-sans select-none overflow-hidden">
       {/* Top Header Bar */}
-      <header className="px-6 py-3.5 bg-tactical-850 border-b border-tactical-700 flex items-center justify-between">
+      <header className="shrink-0 px-6 py-3.5 bg-tactical-850 border-b border-tactical-700 flex items-center justify-between">
         <div className="flex items-center space-x-3">
           <div className="w-8 h-8 rounded-lg bg-tactical-accent/10 border border-tactical-accent/40 flex items-center justify-center text-tactical-accent">
             <Volume2 className="w-5 h-5" />
@@ -619,7 +619,7 @@ export const App: React.FC = () => {
       </header>
 
       {/* Main 3-Tab Navigation Bar */}
-      <nav className="px-6 border-b border-tactical-700 bg-tactical-850/90 flex items-center justify-between">
+      <nav className="shrink-0 px-6 border-b border-tactical-700 bg-tactical-850/90 flex items-center justify-between">
         <div className="flex space-x-1">
           <button
             onClick={() => setActiveTab("perfil")}
@@ -672,7 +672,7 @@ export const App: React.FC = () => {
       </nav>
 
       {/* Main Tab Content */}
-      <main className="flex-1 p-6 max-w-5xl w-full mx-auto space-y-4 overflow-y-auto">
+      <main className="flex-1 min-h-0 px-6 pt-6 pb-8 max-w-5xl w-full mx-auto space-y-4 overflow-y-auto">
         {/* TAB 1: PERFIL DE JUEGO */}
         {activeTab === "perfil" && (
           <div className="space-y-4 animate-in fade-in-50 duration-150">
