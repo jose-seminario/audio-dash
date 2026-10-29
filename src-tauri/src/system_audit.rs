@@ -783,14 +783,24 @@ try {{
         }}
     }}
 
-    # 4. Inyectar Equalizer APO en FxProperties para CABLE Input y para el Dispositivo de Reproducción
-    $targetGuids = @($cableInputGuid, $defaultRenderGuid) | Where-Object {{ $null -ne $_ }}
-    foreach ($g in $targetGuids) {{
-        $fxPath = Join-Path $renderPath "$g\FxProperties"
-        if (Test-Path $fxPath) {{
-            Set-ItemProperty -Path $fxPath -Name "{{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}},5" -Value "{{EACD2258-FCAC-4FF4-B36D-419E924A6D79}}" -Type String -Force -ErrorAction SilentlyContinue
-            Set-ItemProperty -Path $fxPath -Name "{{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}},6" -Value "{{EACD2258-FCAC-4FF4-B36D-419E924A6D79}}" -Type String -Force -ErrorAction SilentlyContinue
-            Set-ItemProperty -Path $fxPath -Name "{{1da5d803-d01f-4704-978c-5ed0b9d846e6}},5" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+    # 4. Inyectar Equalizer APO en FxProperties (LFX/GFX universal y SFX/EFX para Windows 11 Realtek)
+    Get-ChildItem $renderPath | ForEach-Object {{
+        $devKey = $_.PSPath
+        $state = (Get-ItemProperty -Path $devKey -Name "DeviceState" -ErrorAction SilentlyContinue).DeviceState
+        if ($state -eq 1) {{
+            $fxPath = Join-Path $devKey "FxProperties"
+            if (Test-Path $fxPath) {{
+                # LFX & GFX (Compatibilidad universal)
+                Set-ItemProperty -Path $fxPath -Name "{{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}},5" -Value "{{EACD2258-FCAC-4FF4-B36D-419E924A6D79}}" -Type String -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path $fxPath -Name "{{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}},6" -Value "{{EC1CC9CE-FAED-4822-828A-82A81A6F018F}}" -Type String -Force -ErrorAction SilentlyContinue
+                
+                # SFX & EFX (Obligatorio en Windows 11 para Realtek y tarjetas modernas)
+                Set-ItemProperty -Path $fxPath -Name "{{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}},13" -Value "{{EACD2258-FCAC-4FF4-B36D-419E924A6D79}}" -Type String -Force -ErrorAction SilentlyContinue
+                Set-ItemProperty -Path $fxPath -Name "{{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}},15" -Value "{{EC1CC9CE-FAED-4822-828A-82A81A6F018F}}" -Type String -Force -ErrorAction SilentlyContinue
+
+                # Desbloquear procesamiento de efectos
+                Set-ItemProperty -Path $fxPath -Name "{{1da5d803-d01f-4704-978c-5ed0b9d846e6}},5" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+            }}
         }}
     }}
 

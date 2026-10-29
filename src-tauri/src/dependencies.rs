@@ -140,3 +140,12 @@ pub fn add_custom_game_exe(exe_name: String) -> Result<Vec<String>, String> {
 pub fn get_custom_game_exes() -> Vec<String> {
     load_settings().custom_game_exes
 }
+
+#[tauri::command]
+pub fn remove_custom_game_exe(exe_name: String) -> Result<Vec<String>, String> {
+    let mut settings = load_settings();
+    let clean = exe_name.trim().to_lowercase();
+    settings.custom_game_exes.retain(|x| x != &clean);
+    save_settings(&settings)?;
+    Ok(settings.custom_game_exes)
+}
