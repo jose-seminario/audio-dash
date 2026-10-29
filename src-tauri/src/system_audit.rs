@@ -662,3 +662,248 @@ try {{
     .await
     .map_err(|e| e.to_string())?
 }
+
+/// The "Verdadero Botón Mágico (1-Clic)"
+/// Elevated PowerShell orchestration that automatically:
+/// 1. Grants NTFS full control permissions to Users on EqualizerAPO config directory.
+/// 2. Ensures AudioDash.txt is linked in config.txt.
+/// 3. Checks and installs VB-Audio Virtual Cable driver silently if not present.
+/// 4. Finds CABLE Input and Default Playback device, injecting Equalizer APO CLSIDs in FxProperties (Disable_SysFx = 0).
+/// 5. Automatically configures CABLE Output to "Listen to this device" routed to the user's default physical playback device.
+/// 6. Applies High Performance power plan & MMCSS gaming audio real-time priorities.
+/// 7. Restarts Windows Audio Service (audiosrv).
+#[tauri::command]
+pub async fn run_one_click_magic_setup() -> Result<bool, String> {
+    let _ = crate::backup_system::create_backup_if_not_exists();
+
+    tokio::task::spawn_blocking(|| {
+        #[cfg(windows)]
+        {
+            use std::ffi::OsStr;
+            use std::os::windows::ffi::OsStrExt;
+            use windows::core::PCWSTR;
+            use windows::Win32::UI::Shell::ShellExecuteW;
+            use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+            let status_file = get_status_file_path("magic");
+            let _ = std::fs::remove_file(&status_file);
+            let status_path_str = status_file.to_string_lossy();
+
+            let script = format!(r#"
+$statusFile = "{status_path_str}"
+try {{
+    # 1. Otorgar permisos NTFS completos a las carpetas de Equalizer APO
+    $apoDirs = @("C:\Program Files\EqualizerAPO\config", "C:\Program Files (x86)\EqualizerAPO\config")
+    foreach ($dir in $apoDirs) {{
+        if (Test-Path $dir) {{
+            & icacls "$dir" /grant "*S-1-5-32-545:(OI)(CI)F" /T /Q 2>$null
+            & icacls "$dir" /grant "Users:(OI)(CI)F" /T /Q 2>$null
+            & icacls "$dir" /grant "*S-1-5-11:(OI)(CI)F" /T /Q 2>$null
+            & icacls "$dir" /grant "Todos:(OI)(CI)F" /T /Q 2>$null
+
+            # Asegurar include de AudioDash.txt en config.txt
+            $apoConfig = Join-Path $dir "config.txt"
+            $includeLine = 'Include: "' + (Join-Path $dir "AudioDash.txt") + '"'
+            if (Test-Path $apoConfig) {{
+                $content = Get-Content $apoConfig -Raw -ErrorAction SilentlyContinue
+                if ($content -match "Include:.*AudioDash") {{
+                    $newContent = $content -replace "Include:.*AudioDash.*", $includeLine
+                    Set-Content -Path $apoConfig -Value $newContent -Force -Encoding UTF8
+                }} else {{
+                    Add-Content -Path $apoConfig -Value "`r`n$includeLine" -Force -Encoding UTF8
+                }}
+            }} else {{
+                Set-Content -Path $apoConfig -Value $includeLine -Force -Encoding UTF8
+            }}
+        }}
+    }}
+
+    # 2. Comprobar / Instalar VB-Audio Virtual Cable silenciosamente si no existe
+    $renderPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
+    $hasCable = $false
+    if (Test-Path $renderPath) {{
+        $devs = Get-ChildItem $renderPath
+        foreach ($d in $devs) {{
+            $propPath = Join-Path $d.PSPath "Properties"
+            if (Test-Path $propPath) {{
+                $name = (Get-ItemProperty -Path $propPath -Name "{{a45c254e-df1c-4efd-8020-67d146a850e0}},2" -ErrorAction SilentlyContinue)."{{a45c254e-df1c-4efd-8020-67d146a850e0}},2"
+                if ($name -match "CABLE Input") {{
+                    $hasCable = $true
+                    break
+                }}
+            }}
+        }}
+    }}
+
+    if (-not $hasCable) {{
+        $zipUrl = "https://download.vb-audio.com/Download_CAB/VBCABLE_Driver_Pack43.zip"
+        $tempZip = Join-Path $env:TEMP "VBCABLE_Driver_Pack43.zip"
+        $tempExtract = Join-Path $env:TEMP "VBCABLE_Driver"
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing -ErrorAction SilentlyContinue
+        if (Test-Path $tempZip) {{
+            Expand-Archive -Path $tempZip -DestinationPath $tempExtract -Force -ErrorAction SilentlyContinue
+            $inf64 = Join-Path $tempExtract "VBCABLE64_Setup.exe"
+            $infDriver = Join-Path $tempExtract "vbcable64_win10.inf"
+            if (Test-Path $infDriver) {{
+                & pnputil.exe /add-driver $infDriver /install 2>$null
+            }}
+            if (Test-Path $inf64) {{
+                & $inf64 -i -h 2>$null
+            }}
+        }}
+    }}
+
+    # 3. Detectar dispositivos de Render: CABLE Input y Dispositivo Predeterminado / Altavoces
+    $cableInputGuid = $null
+    $defaultRenderGuid = $null
+
+    if (Test-Path $renderPath) {{
+        Get-ChildItem $renderPath | ForEach-Object {{
+            $guid = $_.PSChildName
+            $devKey = $_.PSPath
+            $state = (Get-ItemProperty -Path $devKey -Name "DeviceState" -ErrorAction SilentlyContinue).DeviceState
+            if ($state -eq 1) {{
+                $propPath = Join-Path $devKey "Properties"
+                if (Test-Path $propPath) {{
+                    $epName = (Get-ItemProperty -Path $propPath -Name "{{a45c254e-df1c-4efd-8020-67d146a850e0}},2" -ErrorAction SilentlyContinue)."{{a45c254e-df1c-4efd-8020-67d146a850e0}},2"
+                    if ($epName -match "CABLE Input") {{
+                        $cableInputGuid = $guid
+                    }} elseif ($null -eq $defaultRenderGuid) {{
+                        $defaultRenderGuid = $guid
+                    }}
+                }}
+
+                # Desbloquear procesamiento APO en todos los dispositivos activos
+                $fxPath = Join-Path $devKey "FxProperties"
+                if (Test-Path $fxPath) {{
+                    Set-ItemProperty -Path $fxPath -Name "{{1da5d803-d01f-4704-978c-5ed0b9d846e6}},5" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+                }}
+            }}
+        }}
+    }}
+
+    # 4. Inyectar Equalizer APO en FxProperties para CABLE Input y para el Dispositivo de Reproducción
+    $targetGuids = @($cableInputGuid, $defaultRenderGuid) | Where-Object {{ $null -ne $_ }}
+    foreach ($g in $targetGuids) {{
+        $fxPath = Join-Path $renderPath "$g\FxProperties"
+        if (Test-Path $fxPath) {{
+            Set-ItemProperty -Path $fxPath -Name "{{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}},5" -Value "{{EACD2258-FCAC-4FF4-B36D-419E924A6D79}}" -Type String -Force -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $fxPath -Name "{{d04e05a6-594b-4fb6-a80d-01af5eed7d1d}},6" -Value "{{EACD2258-FCAC-4FF4-B36D-419E924A6D79}}" -Type String -Force -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $fxPath -Name "{{1da5d803-d01f-4704-978c-5ed0b9d846e6}},5" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+        }}
+    }}
+
+    # 5. Enrutar CABLE Output hacia el dispositivo de reproducción físico ("Escuchar este dispositivo")
+    if ($null -ne $defaultRenderGuid) {{
+        $capturePath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Capture"
+        if (Test-Path $capturePath) {{
+            Get-ChildItem $capturePath | ForEach-Object {{
+                $captKey = $_.PSPath
+                $propPath = Join-Path $captKey "Properties"
+                if (Test-Path $propPath) {{
+                    $epName = (Get-ItemProperty -Path $propPath -Name "{{a45c254e-df1c-4efd-8020-67d146a850e0}},2" -ErrorAction SilentlyContinue)."{{a45c254e-df1c-4efd-8020-67d146a850e0}},2"
+                    if ($epName -match "CABLE Output") {{
+                        # PKEY_AudioEndpoint_ListenForCapture target endpoint
+                        $endpointTarget = "{{0.0.0.00000000}}." + $defaultRenderGuid
+                        Set-ItemProperty -Path $propPath -Name "{{24dbb0fc-9311-4b3d-9cf0-18ff155639d4}},0" -Value $endpointTarget -Type String -Force -ErrorAction SilentlyContinue
+                        
+                        # PKEY_AudioEndpoint_ListenForCapture enabled flag (VT_BOOL TRUE = -1)
+                        [byte[]]$boolBytes = 11,0,0,0,1,0,0,0,255,255,0,0
+                        Set-ItemProperty -Path $propPath -Name "{{24dbb0fc-9311-4b3d-9cf0-18ff155639d4}},1" -Value $boolBytes -Type Binary -Force -ErrorAction SilentlyContinue
+                    }}
+                }}
+            }}
+        }}
+    }}
+
+    # 6. Activar Plan de Alto Rendimiento (High Performance)
+    powercfg /setactive 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
+    if ($LASTEXITCODE -ne 0) {{
+        $dupOut = powercfg -duplicatescheme 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c 2>$null
+        if ($dupOut -match "([0-9a-fA-F]{{8}}-([0-9a-fA-F]{{4}}-){{3}}[0-9a-fA-F]{{12}})") {{
+            powercfg /setactive $matches[1] 2>$null
+        }}
+    }}
+
+    # 7. MMCSS Tweaks (SystemResponsiveness = 0 y NetworkThrottlingIndex = 0xFFFFFFFF)
+    $sysProfile = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile"
+    if (Test-Path $sysProfile) {{
+        Set-ItemProperty -Path $sysProfile -Name "SystemResponsiveness" -Value 0 -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $sysProfile -Name "NetworkThrottlingIndex" -Value 0xFFFFFFFF -Type DWord -Force -ErrorAction SilentlyContinue
+    }}
+
+    $gamesTask = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Multimedia\SystemProfile\Tasks\Games"
+    if (Test-Path $gamesTask) {{
+        Set-ItemProperty -Path $gamesTask -Name "GPU Priority" -Value 8 -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $gamesTask -Name "Priority" -Value 6 -Type DWord -Force -ErrorAction SilentlyContinue
+        Set-ItemProperty -Path $gamesTask -Name "Scheduling Category" -Value "High" -Type String -Force -ErrorAction SilentlyContinue
+    }}
+
+    # 8. Reiniciar audiosrv para aplicar cambios limpiamente
+    Restart-Service -Name audiosrv -Force 2>$null
+
+    Set-Content -Path $statusFile -Value "SUCCESS" -Force
+}} catch {{
+    Set-Content -Path $statusFile -Value ("ERROR: " + $_.Exception.Message) -Force
+}}
+"#);
+
+            let encoded_command = encode_powershell_script(&script);
+
+            let file_wide: Vec<u16> = OsStr::new("powershell.exe")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let verb_wide: Vec<u16> = OsStr::new("runas")
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+            let params_wide: Vec<u16> = OsStr::new(&format!("-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand {}", encoded_command))
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect();
+
+            let instance = unsafe {
+                ShellExecuteW(
+                    None,
+                    PCWSTR(verb_wide.as_ptr()),
+                    PCWSTR(file_wide.as_ptr()),
+                    PCWSTR(params_wide.as_ptr()),
+                    PCWSTR(std::ptr::null()),
+                    SW_HIDE,
+                )
+            };
+
+            let launched = (instance.0 as isize) > 32;
+            if !launched {
+                return Ok(false); // UAC denied or cancelled
+            }
+
+            // Poll for status file up to 45 seconds (90 * 500ms)
+            for _ in 0..90 {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                if status_file.exists() {
+                    if let Ok(content) = std::fs::read_to_string(&status_file) {
+                        let clean = content.trim();
+                        if clean == "SUCCESS" {
+                            let _ = std::fs::remove_file(&status_file);
+                            return Ok(true);
+                        } else if clean.starts_with("ERROR") {
+                            let _ = std::fs::remove_file(&status_file);
+                            return Err(clean.to_string());
+                        }
+                    }
+                }
+            }
+
+            Ok(false)
+        }
+        #[cfg(not(windows))]
+        {
+            Ok(true)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

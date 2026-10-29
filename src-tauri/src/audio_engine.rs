@@ -19,7 +19,7 @@ pub struct SliderValues {
     pub compresion: f32,  // 0 - 100%
     #[serde(rename = "atenuacionPropia", alias = "atenuacion_propia", default)]
     pub atenuacion_propia: f32, // 0 a -12 dB (Canal Central C)
-    pub maestro: f32,     // -12 to 0 dB
+    pub maestro: f32,     // -20 to 6 dB
 }
 
 pub fn get_user_config_path() -> PathBuf {
@@ -212,8 +212,8 @@ pub fn generate_apo_config(
     // Anti-clipping calibrado: compensa el pico real sin hundir el volumen general del juego
     let max_peak_boost = peak_pasos + peak_claridad + peak_clutch + (vst_makeup_gain * 0.55) + autoeq_boost.min(4.5);
     let dynamic_anti_clip = -(max_peak_boost + 0.5);
-    let maestro_offset = values.maestro.clamp(-12.0, 0.0);
-    let final_preamp = (dynamic_anti_clip + maestro_offset).clamp(-20.0, 0.0);
+    let maestro_offset = values.maestro.clamp(-20.0, 6.0);
+    let final_preamp = (dynamic_anti_clip + maestro_offset).clamp(-30.0, 6.0);
 
     config.push_str(&format!("Preamp: {:.1} dB\n", final_preamp));
 
@@ -295,9 +295,20 @@ pub fn generate_apo_config(
 /// Helper to trigger hot-reload of audio buffer in Equalizer APO
 pub fn execute_audio_refresh() {
     let path = get_user_config_path();
+    let now = std::time::SystemTime::now();
     if path.exists() {
         if let Ok(file) = OpenOptions::new().write(true).open(&path) {
+            let _ = file.set_modified(now);
             let _ = file.sync_all();
+        }
+    }
+    if let Some(parent) = path.parent() {
+        let main_config = parent.join("config.txt");
+        if main_config.exists() {
+            if let Ok(file) = OpenOptions::new().write(true).open(&main_config) {
+                let _ = file.set_modified(now);
+                let _ = file.sync_all();
+            }
         }
     }
 }
@@ -351,15 +362,35 @@ pub fn update_eq_profile(
 
     tmp_file.write_all(content.as_bytes()).map_err(|e| e.to_string())?;
     tmp_file.flush().map_err(|e| e.to_string())?;
+    let _ = tmp_file.sync_all();
     drop(tmp_file);
 
-    // 2. Reemplazo seguro atómico sin dejar el destino vacío
-    if fs::rename(&tmp_path, &config_path).is_err() {
-        // Fallback copia directa con sobreescritura atómica
-        fs::copy(&tmp_path, &config_path).map_err(|e| {
-            let _ = fs::remove_file(&tmp_path);
-            format!("Error al actualizar AudioDash.txt: {}", e)
-        })?;
+    // 2. Reemplazo seguro atómico y resiliente contra bloqueos de audiodg.exe
+    let mut replaced = fs::rename(&tmp_path, &config_path).is_ok();
+    if !replaced {
+        let _ = fs::remove_file(&config_path);
+        replaced = fs::rename(&tmp_path, &config_path).is_ok();
+    }
+
+    if !replaced {
+        if let Err(_) = fs::copy(&tmp_path, &config_path) {
+            let mut direct = OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(&config_path)
+                .map_err(|err| {
+                    let _ = fs::remove_file(&tmp_path);
+                    if err.kind() == std::io::ErrorKind::PermissionDenied || err.raw_os_error() == Some(5) {
+                        "PERMISSION_DENIED: Usa el botón 'Configuración Automática (1-Clic)' para otorgar permisos a Equalizer APO".to_string()
+                    } else {
+                        format!("Error al actualizar AudioDash.txt: {}", err)
+                    }
+                })?;
+            let _ = direct.write_all(content.as_bytes());
+            let _ = direct.flush();
+            let _ = direct.sync_all();
+        }
         let _ = fs::remove_file(&tmp_path);
     }
 

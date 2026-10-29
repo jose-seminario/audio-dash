@@ -77,7 +77,7 @@ export const WelcomeSetup: React.FC<WelcomeSetupProps> = ({
     setIsAutoConfiguring(true);
     setActionFeedback("Otorgando permisos NTFS (icacls), vinculando ecualizador y optimizando audio...");
     try {
-      const success = await invokeTauri<boolean>("request_system_optimization");
+      const success = await invokeTauri<boolean>("run_one_click_magic_setup");
       if (success) {
         setActionFeedback("✓ ¡Sistema configurado con éxito! Permisos y enlace listos.");
         await onRescan();

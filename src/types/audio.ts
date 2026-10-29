@@ -5,7 +5,7 @@ export interface SliderValues {
   claridad: number;         // 0 - 10: Peaking 1500Hz (Voice clarity)
   compresion: number;       // 0 - 100%: Dynamic Loudness VST Limiter
   atenuacionPropia: number; // 0 a -12 dB: Atenuación canal central (C) contra propios disparos
-  maestro: number;          // -12 to 0 dB: Preamp Master Control
+  maestro: number;          // -20 to 6 dB: Preamp Master Control
 }
 
 export type ProfileType = 'JUEGOS' | 'NORMAL';

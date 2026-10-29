@@ -15,7 +15,7 @@ use backup_system::restore_defaults;
 use clutch_mode::{get_clutch_state, init_clutch_hotkey, toggle_clutch_mode};
 use dependencies::{add_custom_game_exe, check_system_dependencies, get_custom_game_exes, mark_first_run_completed};
 use hrtf_engine::{ensure_hrir_installed, get_available_hrtf_profiles};
-use system_audit::{apply_leq_tweak, audit_system, open_windows_sound_settings, request_system_optimization};
+use system_audit::{apply_leq_tweak, audit_system, open_windows_sound_settings, request_system_optimization, run_one_click_magic_setup};
 use system_tweaks::apply_audiodg_affinity;
 use window_monitor::{get_running_processes_list, scan_running_game_now, spawn_window_monitor};
 
@@ -102,6 +102,7 @@ pub fn run() {
             force_audio_refresh,
             audit_system,
             request_system_optimization,
+            run_one_click_magic_setup,
             apply_leq_tweak,
             apply_audiodg_affinity,
             get_available_hrtf_profiles,

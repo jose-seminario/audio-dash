@@ -233,6 +233,8 @@ export const App: React.FC = () => {
   );
   const [isTestMode, setIsTestMode] = useState<boolean>(false);
   const [showCableModal, setShowCableModal] = useState<boolean>(false);
+  const [showPostSetupModal, setShowPostSetupModal] = useState<boolean>(false);
+  const [isMagicSettingUp, setIsMagicSettingUp] = useState<boolean>(false);
 
   // Per-profile slider values (Persisted in localStorage)
   const [gameSliders, setGameSliders] = useState<SliderValues>(() =>
@@ -274,7 +276,7 @@ export const App: React.FC = () => {
   const [isAuditing, setIsAuditing] = useState<boolean>(false);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [isRestoring, setIsRestoring] = useState<boolean>(false);
-  const [isConfiguringApo, setIsConfiguringApo] = useState<boolean>(false);
+
   const [showPanicConfirm, setShowPanicConfirm] = useState<boolean>(false);
   const [tabFeedbackMessage, setTabFeedbackMessage] = useState<string | null>(null);
   const [permissionError, setPermissionError] = useState<string | null>(null);
@@ -465,23 +467,37 @@ export const App: React.FC = () => {
     handleScanGameNow();
   };
 
-  const handleRequestOptimization = async (): Promise<boolean> => {
-    setIsConfiguringApo(true);
+  const handleRunOneClickSetup = async (): Promise<boolean> => {
+    setIsMagicSettingUp(true);
+    setPermissionError(null);
     try {
-      const success = await tauriInvoke<boolean>("request_system_optimization");
+      const success = await tauriInvoke<boolean>("run_one_click_magic_setup");
       if (success) {
         setPermissionError(null);
         await checkDependencies();
         await runAudit();
+        const devs = await tauriInvoke<AudioDevice[]>("get_audio_devices");
+        setAudioDevices(devs);
+        const virtualDev = devs.find((d) => d.is_virtual_cable);
+        if (virtualDev) {
+          handleDeviceChange(virtualDev.endpoint_name || virtualDev.name);
+        }
+        setShowPostSetupModal(true);
         return true;
+      } else {
+        setPermissionError("La configuración automática fue cancelada en el diálogo de administrador de Windows (UAC).");
+        return false;
       }
-      return false;
     } catch (e) {
-      setPermissionError(`Error optimizando sistema: ${String(e)}`);
+      setPermissionError(`Error en configuración automática: ${String(e)}`);
       return false;
     } finally {
-      setIsConfiguringApo(false);
+      setIsMagicSettingUp(false);
     }
+  };
+
+  const handleRequestOptimization = async (): Promise<boolean> => {
+    return await handleRunOneClickSetup();
   };
 
   const handleDeviceChange = (dev: string) => {
@@ -899,18 +915,16 @@ export const App: React.FC = () => {
 
         {/* Global Quick Action Buttons */}
         <div className="flex items-center space-x-2">
-          {/* 1-Click Auto-Configure Pill if APO config is pending */}
-          {(!dependencyStatus?.config_linked || permissionError) && (
-            <button
-              onClick={handleRequestOptimization}
-              disabled={isConfiguringApo}
-              className="px-3 py-1.5 rounded-lg bg-tactical-accent/20 hover:bg-tactical-accent/30 border border-tactical-accent/60 text-xs font-mono font-bold text-tactical-accent flex items-center space-x-1.5 transition-all shadow-sm"
-              title="Aplica permisos NTFS (icacls) y vincula Equalizer APO en 1 clic"
-            >
-              <Zap className={`w-3.5 h-3.5 ${isConfiguringApo ? "animate-spin" : ""}`} />
-              <span>{isConfiguringApo ? "Configurando..." : "Auto-Configurar (1-Clic)"}</span>
-            </button>
-          )}
+                    {/* 1-Click Auto-Configure Button */}
+          <button
+            onClick={handleRunOneClickSetup}
+            disabled={isMagicSettingUp}
+            className="px-3 py-1.5 rounded-lg bg-tactical-accent hover:bg-cyan-400 text-tactical-900 font-mono text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md shadow-tactical-accent/20 cursor-pointer disabled:opacity-50"
+            title="Configura VB-Cable, permisos NTFS de Equalizer APO y enrutamiento en 1 clic"
+          >
+            <Zap className={`w-3.5 h-3.5 ${isMagicSettingUp ? "animate-spin" : ""}`} />
+            <span>{isMagicSettingUp ? "Configurando..." : "Auto-Configurar (1-Clic)"}</span>
+          </button>
 
           {/* Warzone Ideal Settings Guide Button */}
           <button
@@ -1180,7 +1194,19 @@ export const App: React.FC = () => {
               </div>
 
               {/* Profile switch (Perfil Juegos / Perfil Normal) */}
-              <div className="flex items-center space-x-2">
+                            <div className="flex items-center space-x-2">
+                <button
+                  onClick={handleToggleTestMode}
+                  className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-bold transition-all ${
+                    isTestMode
+                      ? "bg-amber-400 text-tactical-900 border-amber-300 shadow-md shadow-amber-400/20"
+                      : "bg-tactical-800 hover:bg-tactical-700 border-tactical-600 text-slate-300"
+                  }`}
+                  title="Aplica filtros a todo Windows (YouTube, Spotify) para calibrar"
+                >
+                  {isTestMode ? "PRUEBA: ACTIVA" : "MODO PRUEBA"}
+                </button>
+
                 <div className="flex items-center p-1 rounded-lg bg-tactical-900 border border-tactical-700 text-xs font-mono shrink-0">
                   <button
                     onClick={() => {
@@ -1247,8 +1273,8 @@ export const App: React.FC = () => {
                 </div>
                 <input
                   type="range"
-                  min={-12}
-                  max={0}
+                  min={-20}
+                  max={6}
                   step={0.5}
                   value={activeSliders.maestro}
                   onChange={(e) => handleSliderChange("maestro", parseFloat(e.target.value))}
@@ -1485,12 +1511,12 @@ export const App: React.FC = () => {
                 </div>
 
                 <button
-                  onClick={handleRequestOptimization}
-                  disabled={isConfiguringApo}
+                  onClick={handleRunOneClickSetup}
+                  disabled={isMagicSettingUp}
                   className="px-4 py-2 rounded-lg bg-tactical-accent hover:bg-cyan-400 text-tactical-900 font-mono text-xs font-bold flex items-center space-x-2 transition-all shadow-md shadow-tactical-accent/20 disabled:opacity-50"
                 >
-                  <Zap className={`w-4 h-4 ${isConfiguringApo ? "animate-spin" : ""}`} />
-                  <span>{isConfiguringApo ? "CONFIGURANDO..." : "AUTO-CONFIGURAR (UAC)"}</span>
+                  <Zap className={`w-4 h-4 ${isMagicSettingUp ? "animate-spin" : ""}`} />
+                  <span>{isMagicSettingUp ? "CONFIGURANDO..." : "AUTO-CONFIGURAR (1-CLIC)"}</span>
                 </button>
               </div>
               <p className="text-[11px] text-slate-400 leading-relaxed font-mono">
@@ -1747,6 +1773,59 @@ export const App: React.FC = () => {
         currentDetectedGame={currentProcess}
         isGameActive={isGameActive}
       />
+      {/* 1-Click Magic Setup Confirmation Modal */}
+      {showPostSetupModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-tactical-950/90 backdrop-blur-md p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-tactical-900 border-2 border-tactical-green/60 rounded-2xl shadow-2xl p-6 sm:p-7 space-y-5">
+            <div className="flex items-center space-x-3 text-tactical-green">
+              <div className="p-2.5 rounded-xl bg-tactical-green/20 border border-tactical-green/40">
+                <CheckCircle2 className="w-7 h-7" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold font-mono text-slate-100">
+                  ¡Windows Configurado con Éxito!
+                </h3>
+                <p className="text-xs text-tactical-green font-mono">
+                  Cable Virtual, Equalizer APO y Prioridades de Audio listos.
+                </p>
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-tactical-850 border border-tactical-700 space-y-3">
+              <p className="text-xs font-mono font-bold text-slate-200 uppercase tracking-wide">
+                Windows configurado. Abre Warzone y pon:
+              </p>
+
+              <div className="space-y-2 text-xs font-mono">
+                <div className="flex items-center justify-between p-2 rounded bg-tactical-900 border border-tactical-700/60">
+                  <span className="text-slate-400">Dispositivo:</span>
+                  <span className="font-bold text-tactical-accent">CABLE Input</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded bg-tactical-900 border border-tactical-700/60">
+                  <span className="text-slate-400">Mono:</span>
+                  <span className="font-bold text-tactical-alert">OFF (Desactivado)</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded bg-tactical-900 border border-tactical-700/60">
+                  <span className="text-slate-400">Mejoras de Audio:</span>
+                  <span className="font-bold text-tactical-alert">OFF (Desactivado)</span>
+                </div>
+                <div className="flex items-center justify-between p-2 rounded bg-tactical-900 border border-tactical-700/60">
+                  <span className="text-slate-400">Mezcla de Audio:</span>
+                  <span className="font-bold text-tactical-green">Cinema (Cine)</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowPostSetupModal(false)}
+              className="w-full py-3 px-4 rounded-xl bg-tactical-green hover:bg-emerald-400 text-tactical-950 font-mono text-sm font-bold flex items-center justify-center space-x-2 transition-all shadow-lg shadow-tactical-green/20 cursor-pointer"
+            >
+              <CheckCircle2 className="w-5 h-5" />
+              <span>¡ENTENDIDO, LISTO PARA JUGAR!</span>
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
